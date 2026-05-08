@@ -295,156 +295,156 @@ func (cm *ClusterManager) setClusterDefaults(cfg *ClusterConfig) {
 
 // downloadOCPResources downloads required OpenShift resources for the cluster
 func (cm *ClusterManager) downloadOCPResources(cfg *ClusterConfig) error {
-    logrus.Infof("Downloading OpenShift resources for cluster %s", cfg.Name)
+	logrus.Infof("Downloading OpenShift resources for cluster %s", cfg.Name)
 
-    installer := NewInstallManager(cm.config.ConfigDir, cm.http)
-    if err := installer.PrepareInstallation(cfg); err != nil {
-        return fmt.Errorf("failed to prepare installation: %w", err)
-    }
+	installer := NewInstallManager(cm.config.ConfigDir, cm.http)
+	if err := installer.PrepareInstallation(cfg); err != nil {
+		return fmt.Errorf("failed to prepare installation: %w", err)
+	}
 
-    return nil
+	return nil
 }
 
 // createIgnitionConfigs creates and configures ignition files
 func (cm *ClusterManager) createIgnitionConfigs(cfg *ClusterConfig) error {
-    logrus.Infof("Creating ignition configs for cluster %s", cfg.Name)
+	logrus.Infof("Creating ignition configs for cluster %s", cfg.Name)
 
-    installer := NewInstallManager(cm.config.ConfigDir, cm.http)
-    if err := installer.generateIgnitionConfigs(cfg); err != nil {
-        return fmt.Errorf("failed to generate ignition configs: %w", err)
-    }
+	installer := NewInstallManager(cm.config.ConfigDir, cm.http)
+	if err := installer.generateIgnitionConfigs(cfg); err != nil {
+		return fmt.Errorf("failed to generate ignition configs: %w", err)
+	}
 
-    return nil
+	return nil
 }
 
 // createLibvirtNetwork creates the virtual network for the cluster
 func (cm *ClusterManager) createLibvirtNetwork(cfg *ClusterConfig) error {
-    logrus.Infof("Creating libvirt network for cluster %s", cfg.Name)
+	logrus.Infof("Creating libvirt network for cluster %s", cfg.Name)
 
-    libvirt := NewLibvirtManager(cm.config.ConfigDir)
-    if err := libvirt.CreateNetwork(cfg); err != nil {
-        return fmt.Errorf("failed to create libvirt network: %w", err)
-    }
+	libvirt := NewLibvirtManager(cm.config.ConfigDir)
+	if err := libvirt.CreateNetwork(cfg); err != nil {
+		return fmt.Errorf("failed to create libvirt network: %w", err)
+	}
 
-    return nil
+	return nil
 }
 
 // createClusterNodes creates all the required virtual machines for the cluster
 func (cm *ClusterManager) createClusterNodes(cfg *ClusterConfig) error {
-    logrus.Infof("Creating cluster nodes for %s", cfg.Name)
+	logrus.Infof("Creating cluster nodes for %s", cfg.Name)
 
-    libvirt := NewLibvirtManager(cm.config.ConfigDir)
+	libvirt := NewLibvirtManager(cm.config.ConfigDir)
 
-    // Create master nodes
-    for i := 0; i < cfg.MasterCount; i++ {
-        nodeName := fmt.Sprintf("master-%d", i)
-        if err := libvirt.CreateVM(cfg, nodeName, true); err != nil {
-            return fmt.Errorf("failed to create master node %s: %w", nodeName, err)
-        }
-    }
+	// Create master nodes
+	for i := 0; i < cfg.MasterCount; i++ {
+		nodeName := fmt.Sprintf("master-%d", i)
+		if err := libvirt.CreateVM(cfg, nodeName, true); err != nil {
+			return fmt.Errorf("failed to create master node %s: %w", nodeName, err)
+		}
+	}
 
-    // Create worker nodes
-    for i := 0; i < cfg.WorkerCount; i++ {
-        nodeName := fmt.Sprintf("worker-%d", i)
-        if err := libvirt.CreateVM(cfg, nodeName, false); err != nil {
-            return fmt.Errorf("failed to create worker node %s: %w", nodeName, err)
-        }
-    }
+	// Create worker nodes
+	for i := 0; i < cfg.WorkerCount; i++ {
+		nodeName := fmt.Sprintf("worker-%d", i)
+		if err := libvirt.CreateVM(cfg, nodeName, false); err != nil {
+			return fmt.Errorf("failed to create worker node %s: %w", nodeName, err)
+		}
+	}
 
-    return nil
+	return nil
 }
 
 // startClusterNodes starts all nodes in the cluster
 func (cm *ClusterManager) startClusterNodes(cfg *ClusterConfig) error {
-    logrus.Infof("Starting cluster nodes for %s", cfg.Name)
+	logrus.Infof("Starting cluster nodes for %s", cfg.Name)
 
-    libvirt := NewLibvirtManager(cm.config.ConfigDir)
+	libvirt := NewLibvirtManager(cm.config.ConfigDir)
 
-    // Start master nodes
-    for i := 0; i < cfg.MasterCount; i++ {
-        nodeName := fmt.Sprintf("master-%d-%s", i, cfg.Name)
-        if err := libvirt.StartVM(cfg, nodeName); err != nil {
-            return fmt.Errorf("failed to start master node %s: %w", nodeName, err)
-        }
-    }
+	// Start master nodes
+	for i := 0; i < cfg.MasterCount; i++ {
+		nodeName := fmt.Sprintf("master-%d-%s", i, cfg.Name)
+		if err := libvirt.StartVM(cfg, nodeName); err != nil {
+			return fmt.Errorf("failed to start master node %s: %w", nodeName, err)
+		}
+	}
 
-    // Start worker nodes
-    for i := 0; i < cfg.WorkerCount; i++ {
-        nodeName := fmt.Sprintf("worker-%d-%s", i, cfg.Name)
-        if err := libvirt.StartVM(cfg, nodeName); err != nil {
-            return fmt.Errorf("failed to start worker node %s: %w", nodeName, err)
-        }
-    }
+	// Start worker nodes
+	for i := 0; i < cfg.WorkerCount; i++ {
+		nodeName := fmt.Sprintf("worker-%d-%s", i, cfg.Name)
+		if err := libvirt.StartVM(cfg, nodeName); err != nil {
+			return fmt.Errorf("failed to start worker node %s: %w", nodeName, err)
+		}
+	}
 
-    return nil
+	return nil
 }
 
 // stopClusterNodes stops all nodes in the cluster
 func (cm *ClusterManager) stopClusterNodes(cfg *ClusterConfig) error {
-    logrus.Infof("Stopping cluster nodes for %s", cfg.Name)
+	logrus.Infof("Stopping cluster nodes for %s", cfg.Name)
 
-    libvirt := NewLibvirtManager(cm.config.ConfigDir)
+	libvirt := NewLibvirtManager(cm.config.ConfigDir)
 
-    // Stop worker nodes first
-    for i := 0; i < cfg.WorkerCount; i++ {
-        nodeName := fmt.Sprintf("worker-%d-%s", i, cfg.Name)
-        if err := libvirt.StopVM(nodeName); err != nil {
-            logrus.Warnf("Failed to stop worker node %s: %v", nodeName, err)
-        }
-    }
+	// Stop worker nodes first
+	for i := 0; i < cfg.WorkerCount; i++ {
+		nodeName := fmt.Sprintf("worker-%d-%s", i, cfg.Name)
+		if err := libvirt.StopVM(nodeName); err != nil {
+			logrus.Warnf("Failed to stop worker node %s: %v", nodeName, err)
+		}
+	}
 
-    // Stop master nodes last
-    for i := 0; i < cfg.MasterCount; i++ {
-        nodeName := fmt.Sprintf("master-%d-%s", i, cfg.Name)
-        if err := libvirt.StopVM(nodeName); err != nil {
-            logrus.Warnf("Failed to stop master node %s: %v", nodeName, err)
-        }
-    }
+	// Stop master nodes last
+	for i := 0; i < cfg.MasterCount; i++ {
+		nodeName := fmt.Sprintf("master-%d-%s", i, cfg.Name)
+		if err := libvirt.StopVM(nodeName); err != nil {
+			logrus.Warnf("Failed to stop master node %s: %v", nodeName, err)
+		}
+	}
 
-    return nil
+	return nil
 }
 
 // deleteClusterNodes deletes all nodes in the cluster
 func (cm *ClusterManager) deleteClusterNodes(cfg *ClusterConfig) error {
-    logrus.Infof("Deleting cluster nodes for %s", cfg.Name)
+	logrus.Infof("Deleting cluster nodes for %s", cfg.Name)
 
-    libvirt := NewLibvirtManager(cm.config.ConfigDir)
+	libvirt := NewLibvirtManager(cm.config.ConfigDir)
 
-    // Delete worker nodes first
-    for i := 0; i < cfg.WorkerCount; i++ {
-        nodeName := fmt.Sprintf("worker-%d-%s", i, cfg.Name)
-        if err := libvirt.DeleteVM(nodeName); err != nil {
-            logrus.Warnf("Failed to delete worker node %s: %v", nodeName, err)
-        }
-    }
+	// Delete worker nodes first
+	for i := 0; i < cfg.WorkerCount; i++ {
+		nodeName := fmt.Sprintf("worker-%d-%s", i, cfg.Name)
+		if err := libvirt.DeleteVM(nodeName); err != nil {
+			logrus.Warnf("Failed to delete worker node %s: %v", nodeName, err)
+		}
+	}
 
-    // Delete master nodes last
-    for i := 0; i < cfg.MasterCount; i++ {
-        nodeName := fmt.Sprintf("master-%d-%s", i, cfg.Name)
-        if err := libvirt.DeleteVM(nodeName); err != nil {
-            logrus.Warnf("Failed to delete master node %s: %v", nodeName, err)
-        }
-    }
+	// Delete master nodes last
+	for i := 0; i < cfg.MasterCount; i++ {
+		nodeName := fmt.Sprintf("master-%d-%s", i, cfg.Name)
+		if err := libvirt.DeleteVM(nodeName); err != nil {
+			logrus.Warnf("Failed to delete master node %s: %v", nodeName, err)
+		}
+	}
 
-    return nil
+	return nil
 }
 
 // allocateNetworkResources allocates network resources for the cluster
 func (cm *ClusterManager) allocateNetworkResources(cfg *ClusterConfig) error {
-    logrus.Infof("Allocating network resources for cluster %s", cfg.Name)
+	logrus.Infof("Allocating network resources for cluster %s", cfg.Name)
 
-    networkManager := GetNetworkManager()
-    if err := networkManager.AllocateNetworkResources(cfg); err != nil {
-        return fmt.Errorf("failed to allocate network resources: %w", err)
-    }
+	networkManager := GetNetworkManager()
+	if err := networkManager.AllocateNetworkResources(cfg); err != nil {
+		return fmt.Errorf("failed to allocate network resources: %w", err)
+	}
 
-    return nil
+	return nil
 }
 
 // releaseNetworkResources releases network resources for the cluster
 func (cm *ClusterManager) releaseNetworkResources(cfg *ClusterConfig) {
-    logrus.Infof("Releasing network resources for cluster %s", cfg.Name)
+	logrus.Infof("Releasing network resources for cluster %s", cfg.Name)
 
-    networkManager := GetNetworkManager()
-    networkManager.ReleaseNetworkResources(cfg)
+	networkManager := GetNetworkManager()
+	networkManager.ReleaseNetworkResources(cfg)
 }

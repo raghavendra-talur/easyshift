@@ -169,7 +169,7 @@ func (im *InstallManager) createInstallConfig(cluster *ClusterConfig) error {
 		SSHKey string
 	}{
 		ClusterConfig: cluster,
-		SSHKey:       string(sshKeyBytes),
+		SSHKey:        string(sshKeyBytes),
 	}
 
 	// Parse and execute template
