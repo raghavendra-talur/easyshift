@@ -12,11 +12,11 @@ import (
 
 const (
 	// Core configuration constants
-	DefaultConfigDir   = "/root/.config/easyshift"
-	DefaultLogFile     = "easyshift.log"
-	DefaultWebPort     = 9393
-	DefaultClustersMax = 3
-	DefaultWorkersMax  = 3
+	DefaultRelConfigDir = ".config/easyshift" // config dir relative to the base (home) directory
+	DefaultLogFile      = "easyshift.log"
+	DefaultWebPort      = 9393
+	DefaultClustersMax  = 3
+	DefaultWorkersMax   = 3
 
 	// Network configuration
 	BaseNetworkRange = "192.168.1"
@@ -74,16 +74,28 @@ var (
 // GetConfig returns the singleton config instance
 func GetConfig() *Config {
 	configOnce.Do(func() {
+		defaultConfigDir := filepath.Join(os.TempDir(), "easyshift")
+
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			logrus.Warnf("failed to determine user home directory, using fallback config dir %q: %v", defaultConfigDir, err)
+		} else {
+			defaultConfigDir = filepath.Join(homeDir, DefaultRelConfigDir)
+		}
+
 		globalConfig = &Config{
-			ConfigDir: DefaultConfigDir,
-			LogFile:   filepath.Join(DefaultConfigDir, DefaultLogFile),
+			ConfigDir: defaultConfigDir,
+			LogFile:   filepath.Join(defaultConfigDir, DefaultLogFile),
 			WebPort:   DefaultWebPort,
 			GlobalState: &GlobalState{
 				UsedIPs:  make(map[string]bool),
 				UsedMACs: make(map[string]bool),
 			},
 		}
-		globalConfig.load()
+		if err := globalConfig.load(); err != nil {
+			// log the error during initialization but don't panic here
+			logrus.Debugf("failed to load config: %v", err)
+		}
 	})
 	return globalConfig
 }
@@ -101,6 +113,8 @@ func (c *Config) load() error {
 	data, err := os.ReadFile(configFile)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// release loch to avoid deadlock with save()
+			c.Unlock()
 			return c.save() // Save default configuration
 		}
 		return fmt.Errorf("failed to read config file: %w", err)
@@ -141,6 +155,10 @@ func InitLogging(debug bool) {
 		logrus.SetLevel(logrus.DebugLevel)
 	} else {
 		logrus.SetLevel(logrus.InfoLevel)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(GetConfig().LogFile), 0o700); err != nil {
+		logrus.Fatal(err)
 	}
 
 	logFile, err := os.OpenFile(
