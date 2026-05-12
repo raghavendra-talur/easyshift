@@ -113,6 +113,8 @@ func (c *Config) load() error {
 	data, err := os.ReadFile(configFile)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// release loch to avoid deadlock with save()
+			c.Unlock()
 			return c.save() // Save default configuration
 		}
 		return fmt.Errorf("failed to read config file: %w", err)
