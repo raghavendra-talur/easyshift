@@ -22,7 +22,7 @@ type NetworkManager struct {
 
 var (
 	networkManager *NetworkManager
-	networkOnce   sync.Once
+	networkOnce    sync.Once
 )
 
 // GetNetworkManager returns the singleton network manager instance
