@@ -8,8 +8,10 @@ import (
 	"net"
 	"os"
 
-	"github.com/raghavendra-talur/easyshift"
-	"github.com/raghavendra-talur/easyshift/fakes"
+	"github.com/raghavendra-talur/easyshift/app"
+	"github.com/raghavendra-talur/easyshift/config"
+	"github.com/raghavendra-talur/easyshift/interfaces"
+	"github.com/raghavendra-talur/easyshift/providers/fakes"
 	"github.com/spf13/cobra"
 )
 
@@ -31,14 +33,14 @@ func main() {
 		simulate bool
 	)
 
-	configDir := easyshift.DefaultConfigDir()
-	cfg, err := easyshift.LoadConfig(configDir)
+	configDir := config.DefaultConfigDir()
+	cfg, err := config.LoadConfig(configDir)
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
 
-	var mgr *easyshift.ClusterManager
-	var deps easyshift.Deps
+	var mgr *app.ClusterManager
+	var deps interfaces.Deps
 	var simBundle *fakes.Bundle // set only when --simulate
 
 	rootCmd := &cobra.Command{
@@ -55,20 +57,20 @@ It provides a simple interface for cluster lifecycle management.`,
 					return fmt.Errorf("simulate: %w", err)
 				}
 				cfg, deps, simBundle = simCfg, simDeps, bundle
-				if err := easyshift.InitLogging(cfg.LogFile, debug); err != nil {
+				if err := config.InitLogging(cfg.LogFile, debug); err != nil {
 					return err
 				}
-				mgr = easyshift.NewClusterManager(cfg, deps)
+				mgr = app.NewClusterManager(cfg, deps)
 				return nil
 			}
-			if err := easyshift.InitLogging(cfg.LogFile, debug); err != nil {
+			if err := config.InitLogging(cfg.LogFile, debug); err != nil {
 				return err
 			}
 			host, err := primaryHostIP()
 			if err != nil {
 				return fmt.Errorf("detect host IP: %w", err)
 			}
-			deps, err = easyshift.NewProductionDeps(cfg, host)
+			deps, err = app.NewProductionDeps(cfg, host)
 			if err != nil {
 				return err
 			}
@@ -77,7 +79,7 @@ It provides a simple interface for cluster lifecycle management.`,
 					return fmt.Errorf("start file server: %w", err)
 				}
 			}
-			mgr = easyshift.NewClusterManager(cfg, deps)
+			mgr = app.NewClusterManager(cfg, deps)
 			return nil
 		},
 		PersistentPostRunE: func(cmd *cobra.Command, args []string) error {
@@ -114,7 +116,7 @@ It provides a simple interface for cluster lifecycle management.`,
 	}
 }
 
-func newCreateCommand(mgr **easyshift.ClusterManager) *cobra.Command {
+func newCreateCommand(mgr **app.ClusterManager) *cobra.Command {
 	var (
 		name        string
 		baseDomain  string
@@ -140,7 +142,7 @@ func newCreateCommand(mgr **easyshift.ClusterManager) *cobra.Command {
 		Short:       "Create a new OpenShift cluster",
 		Annotations: map[string]string{annotationNeedsFileServer: "true"},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return (*mgr).Create(context.Background(), &easyshift.ClusterConfig{
+			return (*mgr).Create(context.Background(), &config.ClusterConfig{
 				Name:        name,
 				Domain:      baseDomain,
 				OCPVersion:  ocpVersion,
@@ -166,12 +168,12 @@ func newCreateCommand(mgr **easyshift.ClusterManager) *cobra.Command {
 	cmd.Flags().StringVarP(&baseDomain, "base-domain", "D", "local",
 		"OpenShift baseDomain; the cluster's API and ingress live under <name>.<base-domain> "+
 			"(e.g. api.<name>.<base-domain>). In bridge mode you must create matching DNS records.")
-	cmd.Flags().StringVarP(&ocpVersion, "version", "v", easyshift.DefaultOCPVersion, "OpenShift version")
+	cmd.Flags().StringVarP(&ocpVersion, "version", "v", config.DefaultOCPVersion, "OpenShift version")
 	cmd.Flags().IntVarP(&masterCount, "masters", "m", 1, "Number of master nodes (must be 1)")
 	cmd.Flags().IntVarP(&workerCount, "workers", "w", 0, "Number of worker nodes (Phase 1: must be 0; add later via addnode)")
 	cmd.Flags().IntVar(&masterRAM, "master-ram", 32768, "Master node RAM in MB")
 	cmd.Flags().IntVar(&workerRAM, "worker-ram", 16384, "Worker node RAM in MB")
-	cmd.Flags().StringVar(&networkMode, "network-mode", easyshift.NetworkModeNAT,
+	cmd.Flags().StringVar(&networkMode, "network-mode", config.NetworkModeNAT,
 		"Network mode: 'nat' (libvirt NAT + HAProxy on host) or 'bridge' (attach to a host Linux bridge on the LAN)")
 	cmd.Flags().StringVar(&bridge, "bridge", "",
 		"Name of an existing host Linux bridge (e.g. br0); required when --network-mode=bridge")
@@ -181,7 +183,7 @@ func newCreateCommand(mgr **easyshift.ClusterManager) *cobra.Command {
 		"IP the router will hand to --master-mac; required in bridge mode")
 	cmd.Flags().StringVar(&machineCIDR, "machine-cidr", "",
 		"Override the LAN CIDR for networking.machineNetwork in install-config; defaults to /24 of --master-ip")
-	cmd.Flags().StringVar(&storagePool, "storage-pool", easyshift.DefaultStoragePool,
+	cmd.Flags().StringVar(&storagePool, "storage-pool", config.DefaultStoragePool,
 		"libvirt storage pool for the master disk and boot ISO (run `virsh pool-list --all` to see yours)")
 	cmd.Flags().StringVar(&dnsProvider, "dns-provider", "",
 		"Public DNS provider to use for api/api-int/*.apps records (currently: 'cloudflare'). "+
@@ -199,7 +201,7 @@ func newCreateCommand(mgr **easyshift.ClusterManager) *cobra.Command {
 	return cmd
 }
 
-func newStartCommand(mgr **easyshift.ClusterManager) *cobra.Command {
+func newStartCommand(mgr **app.ClusterManager) *cobra.Command {
 	return &cobra.Command{
 		Use:   "start [cluster-name]",
 		Short: "Start a cluster",
@@ -210,7 +212,7 @@ func newStartCommand(mgr **easyshift.ClusterManager) *cobra.Command {
 	}
 }
 
-func newStopCommand(mgr **easyshift.ClusterManager) *cobra.Command {
+func newStopCommand(mgr **app.ClusterManager) *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop [cluster-name]",
 		Short: "Stop a cluster",
@@ -221,7 +223,7 @@ func newStopCommand(mgr **easyshift.ClusterManager) *cobra.Command {
 	}
 }
 
-func newDeleteCommand(mgr **easyshift.ClusterManager) *cobra.Command {
+func newDeleteCommand(mgr **app.ClusterManager) *cobra.Command {
 	return &cobra.Command{
 		Use:   "delete [cluster-name]",
 		Short: "Delete a cluster",
@@ -232,7 +234,7 @@ func newDeleteCommand(mgr **easyshift.ClusterManager) *cobra.Command {
 	}
 }
 
-func newListCommand(mgr **easyshift.ClusterManager) *cobra.Command {
+func newListCommand(mgr **app.ClusterManager) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List all clusters",
@@ -252,7 +254,7 @@ func newListCommand(mgr **easyshift.ClusterManager) *cobra.Command {
 	}
 }
 
-func newStatusCommand(mgr **easyshift.ClusterManager) *cobra.Command {
+func newStatusCommand(mgr **app.ClusterManager) *cobra.Command {
 	return &cobra.Command{
 		Use:   "status <cluster-name>",
 		Short: "Show diagnostic info for a cluster (VM, DNS, API reachability)",
@@ -268,7 +270,7 @@ func newStatusCommand(mgr **easyshift.ClusterManager) *cobra.Command {
 	}
 }
 
-func newPullSecretCommand(cfg *easyshift.Config) *cobra.Command {
+func newPullSecretCommand(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pull-secret",
 		Short: "Manage the OpenShift pull secret used for cluster installs",
@@ -288,10 +290,10 @@ func newPullSecretCommand(cfg *easyshift.Config) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("read pull secret source: %w", err)
 			}
-			if err := easyshift.WritePullSecret(cfg.ConfigDir, data); err != nil {
+			if err := config.WritePullSecret(cfg.ConfigDir, data); err != nil {
 				return err
 			}
-			fmt.Printf("pull secret stored at %s\n", easyshift.PullSecretPath(cfg.ConfigDir))
+			fmt.Printf("pull secret stored at %s\n", config.PullSecretPath(cfg.ConfigDir))
 			return nil
 		},
 	})
@@ -300,17 +302,17 @@ func newPullSecretCommand(cfg *easyshift.Config) *cobra.Command {
 		Short: "Print the path of the persisted pull secret",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if err := easyshift.EnsurePullSecret(cfg.ConfigDir); err != nil {
+			if err := config.EnsurePullSecret(cfg.ConfigDir); err != nil {
 				return err
 			}
-			fmt.Println(easyshift.PullSecretPath(cfg.ConfigDir))
+			fmt.Println(config.PullSecretPath(cfg.ConfigDir))
 			return nil
 		},
 	})
 	return cmd
 }
 
-func newDNSCommand(cfg *easyshift.Config) *cobra.Command {
+func newDNSCommand(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "dns",
 		Short: "Manage credentials for the public DNS provider used to create cluster records",
@@ -331,10 +333,10 @@ func newDNSCommand(cfg *easyshift.Config) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("read token source: %w", err)
 			}
-			if err := easyshift.WriteDNSToken(cfg.ConfigDir, provider, data); err != nil {
+			if err := config.WriteDNSToken(cfg.ConfigDir, provider, data); err != nil {
 				return err
 			}
-			fmt.Printf("%s token stored at %s\n", provider, easyshift.DNSTokenPath(cfg.ConfigDir, provider))
+			fmt.Printf("%s token stored at %s\n", provider, config.DNSTokenPath(cfg.ConfigDir, provider))
 			return nil
 		},
 	})
@@ -343,10 +345,10 @@ func newDNSCommand(cfg *easyshift.Config) *cobra.Command {
 		Short: "Print the path of the persisted token for the given provider",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			if err := easyshift.EnsureDNSToken(cfg.ConfigDir, args[0]); err != nil {
+			if err := config.EnsureDNSToken(cfg.ConfigDir, args[0]); err != nil {
 				return err
 			}
-			fmt.Println(easyshift.DNSTokenPath(cfg.ConfigDir, args[0]))
+			fmt.Println(config.DNSTokenPath(cfg.ConfigDir, args[0]))
 			return nil
 		},
 	})
@@ -359,24 +361,24 @@ func newDNSCommand(cfg *easyshift.Config) *cobra.Command {
 // A fake pull secret and DNS token are pre-planted so the create pipeline
 // makes it past the preflight checks that would otherwise require real
 // credentials.
-func newSimulationEnv(real *easyshift.Config) (*easyshift.Config, easyshift.Deps, *fakes.Bundle, error) {
+func newSimulationEnv(real *config.Config) (*config.Config, interfaces.Deps, *fakes.Bundle, error) {
 	tmp, err := os.MkdirTemp("", "easyshift-sim-*")
 	if err != nil {
-		return nil, easyshift.Deps{}, nil, err
+		return nil, interfaces.Deps{}, nil, err
 	}
-	cfg := easyshift.NewDefaultConfig(tmp)
+	cfg := config.NewDefaultConfig(tmp)
 	cfg.WebPort = real.WebPort
 	if err := os.MkdirAll(cfg.ConfigDir, 0o700); err != nil {
-		return nil, easyshift.Deps{}, nil, err
+		return nil, interfaces.Deps{}, nil, err
 	}
 	// Pull-secret preflight rejects an absent file; plant a syntactically
 	// valid stand-in so the pipeline progresses.
-	if err := easyshift.WritePullSecret(cfg.ConfigDir, []byte(`{"auths":{"sim":{"auth":"c2ltdWxhdGVk"}}}`)); err != nil {
-		return nil, easyshift.Deps{}, nil, err
+	if err := config.WritePullSecret(cfg.ConfigDir, []byte(`{"auths":{"sim":{"auth":"c2ltdWxhdGVk"}}}`)); err != nil {
+		return nil, interfaces.Deps{}, nil, err
 	}
 	// Token for the cloudflare DNS provider — same reason.
-	if err := easyshift.WriteDNSToken(cfg.ConfigDir, easyshift.DNSProviderCloudflare, []byte("simulated-token")); err != nil {
-		return nil, easyshift.Deps{}, nil, err
+	if err := config.WriteDNSToken(cfg.ConfigDir, config.DNSProviderCloudflare, []byte("simulated-token")); err != nil {
+		return nil, interfaces.Deps{}, nil, err
 	}
 	deps, bundle := fakes.All()
 	return cfg, deps, bundle, nil

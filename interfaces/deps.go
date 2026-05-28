@@ -1,0 +1,24 @@
+package interfaces
+
+// Deps is the wiring DTO: a bag of every side-effect implementation. app
+// (production) and tests (fakes) populate it, then app.buildStages maps each
+// field into the constructor of the stage that needs it. Stages do NOT
+// receive Deps — they get exactly the interfaces they depend on. This struct
+// exists only so construction has one well-known shape.
+type Deps struct {
+	Cmd        CommandRunner
+	Download   Downloader
+	VM         VMManager
+	Net        NetworkProvisioner
+	Installer  Installer
+	Files      FileServer
+	CSR        CSRApprover
+	Hostname   HostnameInjector
+	Host       HostInspector
+	DNS        DNSResolver
+	DNSManager DNSManager
+	// NewCertIssuer constructs a CertIssuer for per-cluster ACME settings
+	// (email + staging). Function-shaped because that state isn't known until
+	// a specific cluster is being created.
+	NewCertIssuer func(opts CertIssuerOpts) (CertIssuer, error)
+}
