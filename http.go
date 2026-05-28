@@ -10,59 +10,62 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// HTTPServer handles serving installation files
-type HTTPServer struct {
+// HTTPFileServer is the real FileServer implementation backed by net/http.
+type HTTPFileServer struct {
+	rootDir string
+	port    int
+	host    string
 	server  *http.Server
-	RootDir string
 }
 
-// NewHTTPServer creates a new HTTP server
-func NewHTTPServer() *HTTPServer {
-	rootDir := filepath.Join(GetConfig().ConfigDir, "http")
-	if err := os.MkdirAll(rootDir, 0700); err != nil {
-		logrus.Fatalf("Failed to create HTTP root directory: %v", err)
+// NewHTTPFileServer returns a FileServer rooted at rootDir, listening on :port.
+// host is used to construct BaseURL() (callers usually pass the host's primary IP).
+func NewHTTPFileServer(rootDir, host string, port int) (*HTTPFileServer, error) {
+	if err := os.MkdirAll(rootDir, 0o700); err != nil {
+		return nil, fmt.Errorf("create HTTP root: %w", err)
 	}
-
-	hs := &HTTPServer{
-		RootDir: rootDir,
-	}
-
 	mux := http.NewServeMux()
 	mux.Handle("/", http.FileServer(http.Dir(rootDir)))
-
-	hs.server = &http.Server{
-		Addr:    fmt.Sprintf(":%d", GetConfig().WebPort),
-		Handler: mux,
-	}
-
-	return hs
+	return &HTTPFileServer{
+		rootDir: rootDir,
+		port:    port,
+		host:    host,
+		server: &http.Server{
+			Addr:    fmt.Sprintf(":%d", port),
+			Handler: mux,
+		},
+	}, nil
 }
 
-// Start starts the HTTP server
-func (hs *HTTPServer) Start() error {
-	logrus.Infof("Starting HTTP server on port %d", GetConfig().WebPort)
+// Start begins serving in a background goroutine.
+func (s *HTTPFileServer) Start(_ context.Context) error {
+	logrus.Infof("starting HTTP file server on %s (root: %s)", s.server.Addr, s.rootDir)
 	go func() {
-		if err := hs.server.ListenAndServe(); err != http.ErrServerClosed {
-			logrus.Errorf("HTTP server error: %v", err)
+		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logrus.Errorf("HTTP server: %v", err)
 		}
 	}()
 	return nil
 }
 
-// Stop stops the HTTP server
-func (hs *HTTPServer) Stop() error {
-	logrus.Info("Stopping HTTP server")
-	return hs.server.Shutdown(context.Background())
+// Stop shuts down the server.
+func (s *HTTPFileServer) Stop(ctx context.Context) error {
+	return s.server.Shutdown(ctx)
 }
 
-// CreateClusterDir creates a directory for cluster files
-func (hs *HTTPServer) CreateClusterDir(clusterName string) error {
-	dir := filepath.Join(hs.RootDir, clusterName)
-	return os.MkdirAll(dir, 0700)
+// RootDir returns the directory being served.
+func (s *HTTPFileServer) RootDir() string { return s.rootDir }
+
+// BaseURL returns the URL prefix VMs should use when fetching files.
+func (s *HTTPFileServer) BaseURL() string {
+	return fmt.Sprintf("http://%s:%d", s.host, s.port)
 }
 
-// DeleteClusterDir deletes a cluster's directory
-func (hs *HTTPServer) DeleteClusterDir(clusterName string) error {
-	dir := filepath.Join(hs.RootDir, clusterName)
-	return os.RemoveAll(dir)
+// EnsureClusterDir creates a subdirectory under the server root for a cluster.
+func (s *HTTPFileServer) EnsureClusterDir(clusterName string) (string, error) {
+	dir := filepath.Join(s.rootDir, clusterName)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, nil
 }

@@ -1,10 +1,11 @@
 package easyshift
 
 import (
+	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
-	"sync"
 
 	"github.com/sirupsen/logrus"
 )
@@ -22,429 +23,251 @@ const (
 	defaultWorkerDiskGB = 120
 )
 
-// ClusterManager handles cluster operations
+// ClusterManager owns the cluster lifecycle. Side-effecting work is
+// delegated to Stages run by a Runner, so the manager itself contains
+// validation, default-application, and stage-list assembly only.
 type ClusterManager struct {
-	sync.RWMutex
-	config *Config
-	http   *HTTPServer
+	cfg    *Config
+	deps   Deps
+	runner *Runner
 }
 
-var (
-	clusterManager *ClusterManager
-	managerOnce    sync.Once
-)
+// NewClusterManager constructs a ClusterManager backed by the given config
+// and deps. The Runner persists per-cluster state under cfg.ConfigDir.
+func NewClusterManager(cfg *Config, deps Deps) *ClusterManager {
+	return &ClusterManager{
+		cfg:    cfg,
+		deps:   deps,
+		runner: NewRunner(cfg.ConfigDir),
+	}
+}
 
-// GetClusterManager returns the singleton cluster manager instance
-func GetClusterManager() *ClusterManager {
-	managerOnce.Do(func() {
-		clusterManager = &ClusterManager{
-			config: GetConfig(),
-			http:   NewHTTPServer(),
+// Create provisions a cluster by running ClusterCreateStages. If a cluster
+// with the same name already exists in a non-running state, Create resumes
+// from the first unapplied stage; if it is already running, Create returns
+// an error.
+func (cm *ClusterManager) Create(ctx context.Context, c *ClusterConfig) error {
+	if err := cm.validateName(c); err != nil {
+		return err
+	}
+	if err := EnsurePullSecret(cm.cfg.ConfigDir); err != nil {
+		return err
+	}
+
+	if existing := cm.find(c.Name); existing != nil {
+		if existing.State == ClusterStateRunning {
+			return fmt.Errorf("cluster %s is already running", c.Name)
 		}
-	})
-	return clusterManager
+		logrus.Infof("resuming create for existing cluster %s (state=%s)", c.Name, existing.State)
+		c = existing
+	} else {
+		cm.applyDefaults(c)
+		if err := cm.validateNew(c); err != nil {
+			return err
+		}
+	}
+
+	// Resolve channel aliases (e.g., "stable") to a concrete version BEFORE
+	// any stage runs, so the resolved value is what register-cluster
+	// persists and every subsequent stage references the same version.
+	// Idempotent: a cluster resumed from disk already has a concrete version.
+	if !IsResolvedOCPVersion(c.OCPVersion) {
+		resolved, err := ResolveOCPVersion(ctx, cm.deps.Download, c.OCPVersion)
+		if err != nil {
+			return fmt.Errorf("resolve OCP version %q: %w", c.OCPVersion, err)
+		}
+		logrus.Infof("resolved OCP channel %q to %s", c.OCPVersion, resolved)
+		c.OCPVersion = resolved
+	}
+
+	sc := &StageContext{Cluster: c, Config: cm.cfg, Deps: cm.deps}
+	stages := ClusterCreateStages()
+	if err := cm.runner.Preflight(ctx, sc, stages); err != nil {
+		return fmt.Errorf("preflight: %w", err)
+	}
+	return cm.runner.Apply(ctx, sc, stages)
 }
 
-// CreateCluster creates a new OpenShift cluster
-func CreateCluster(cfg *ClusterConfig) error {
-	cm := GetClusterManager()
-	cm.Lock()
-	defer cm.Unlock()
-
-	logrus.Infof("Creating cluster: %s.%s", cfg.Name, cfg.Domain)
-
-	// Validate configuration
-	if err := cm.validateClusterConfig(cfg); err != nil {
-		return fmt.Errorf("invalid cluster configuration: %w", err)
-	}
-
-	// Set defaults
-	cm.setClusterDefaults(cfg)
-
-	// Allocate network resources
-	if err := cm.allocateNetworkResources(cfg); err != nil {
-		return fmt.Errorf("failed to allocate network resources: %w", err)
-	}
-
-	// Create cluster directory
-	clusterDir := filepath.Join(cm.config.ConfigDir, "clusters", cfg.Name)
-	if err := os.MkdirAll(clusterDir, 0700); err != nil {
-		return fmt.Errorf("failed to create cluster directory: %w", err)
-	}
-
-	// Download OpenShift binaries and images
-	if err := cm.downloadOCPResources(cfg); err != nil {
-		return fmt.Errorf("failed to download OpenShift resources: %w", err)
-	}
-
-	// Create ignition configs
-	if err := cm.createIgnitionConfigs(cfg); err != nil {
-		return fmt.Errorf("failed to create ignition configs: %w", err)
-	}
-
-	// Create libvirt network
-	if err := cm.createLibvirtNetwork(cfg); err != nil {
-		return fmt.Errorf("failed to create libvirt network: %w", err)
-	}
-
-	// Create and start VMs
-	if err := cm.createClusterNodes(cfg); err != nil {
-		return fmt.Errorf("failed to create cluster nodes: %w", err)
-	}
-
-	// Update cluster state
-	cfg.State = ClusterStateRunning
-	cm.config.Clusters = append(cm.config.Clusters, cfg)
-	if err := cm.config.save(); err != nil {
-		return fmt.Errorf("failed to save cluster configuration: %w", err)
-	}
-
-	logrus.Infof("Cluster %s.%s created successfully", cfg.Name, cfg.Domain)
-	return nil
-}
-
-// StartCluster starts a stopped cluster
-func StartCluster(name string) error {
-	cm := GetClusterManager()
-	cm.Lock()
-	defer cm.Unlock()
-
-	cluster := cm.findCluster(name)
-	if cluster == nil {
+// Start boots all nodes for a stopped cluster. (Will be re-implemented as
+// its own stage set in a later phase.)
+func (cm *ClusterManager) Start(ctx context.Context, name string) error {
+	c := cm.find(name)
+	if c == nil {
 		return fmt.Errorf("cluster %s not found", name)
 	}
-
-	if cluster.State == ClusterStateRunning {
+	if c.State == ClusterStateRunning {
 		return fmt.Errorf("cluster %s is already running", name)
 	}
-
-	logrus.Infof("Starting cluster: %s", name)
-
-	// Start VMs
-	if err := cm.startClusterNodes(cluster); err != nil {
-		return fmt.Errorf("failed to start cluster nodes: %w", err)
+	for _, vm := range cm.vmNames(c) {
+		if err := cm.deps.VM.Start(ctx, vm); err != nil {
+			return fmt.Errorf("start %s: %w", vm, err)
+		}
 	}
-
-	cluster.State = ClusterStateRunning
-	if err := cm.config.save(); err != nil {
-		return fmt.Errorf("failed to save cluster state: %w", err)
-	}
-
-	return nil
+	c.State = ClusterStateRunning
+	return cm.cfg.Save()
 }
 
-// StopCluster stops a running cluster
-func StopCluster(name string) error {
-	cm := GetClusterManager()
-	cm.Lock()
-	defer cm.Unlock()
-
-	cluster := cm.findCluster(name)
-	if cluster == nil {
+// Stop shuts down all nodes for a running cluster.
+func (cm *ClusterManager) Stop(ctx context.Context, name string) error {
+	c := cm.find(name)
+	if c == nil {
 		return fmt.Errorf("cluster %s not found", name)
 	}
-
-	if cluster.State != ClusterStateRunning {
+	if c.State != ClusterStateRunning {
 		return fmt.Errorf("cluster %s is not running", name)
 	}
-
-	logrus.Infof("Stopping cluster: %s", name)
-
-	// Stop VMs
-	if err := cm.stopClusterNodes(cluster); err != nil {
-		return fmt.Errorf("failed to stop cluster nodes: %w", err)
+	for _, vm := range cm.vmNames(c) {
+		if err := cm.deps.VM.Stop(ctx, vm); err != nil {
+			logrus.Warnf("stop %s: %v", vm, err)
+		}
 	}
-
-	cluster.State = ClusterStateStopped
-	if err := cm.config.save(); err != nil {
-		return fmt.Errorf("failed to save cluster state: %w", err)
-	}
-
-	return nil
+	c.State = ClusterStateStopped
+	return cm.cfg.Save()
 }
 
-// DeleteCluster deletes a cluster
-func DeleteCluster(name string) error {
-	cm := GetClusterManager()
-	cm.Lock()
-	defer cm.Unlock()
-
-	cluster := cm.findCluster(name)
-	if cluster == nil {
+// Delete tears down a cluster by rolling back every stage recorded as
+// applied in state.json, then removes the on-disk state file.
+func (cm *ClusterManager) Delete(ctx context.Context, name string) error {
+	c := cm.find(name)
+	if c == nil {
 		return fmt.Errorf("cluster %s not found", name)
 	}
 
-	logrus.Infof("Deleting cluster: %s", name)
-
-	// Stop cluster if running
-	if cluster.State == ClusterStateRunning {
-		if err := StopCluster(name); err != nil {
-			return fmt.Errorf("failed to stop cluster: %w", err)
+	if c.State == ClusterStateRunning {
+		if err := cm.Stop(ctx, name); err != nil {
+			return err
 		}
 	}
 
-	// Delete VMs
-	if err := cm.deleteClusterNodes(cluster); err != nil {
-		return fmt.Errorf("failed to delete cluster nodes: %w", err)
+	sc := &StageContext{Cluster: c, Config: cm.cfg, Deps: cm.deps}
+	if err := cm.runner.Rollback(ctx, sc, ClusterCreateStages()); err != nil {
+		return fmt.Errorf("rollback: %w", err)
 	}
 
-	// Delete cluster directory
-	clusterDir := filepath.Join(cm.config.ConfigDir, "clusters", cluster.Name)
-	if err := os.RemoveAll(clusterDir); err != nil {
-		return fmt.Errorf("failed to delete cluster directory: %w", err)
-	}
+	// ensure-cluster-dir's Rollback removed the cluster dir mid-chain, but
+	// the runner re-creates it each time it persists state.json after a
+	// rollback step. With all rollbacks done, the dir has no purpose —
+	// wipe it (and the empty state.json inside) so a future Create is fresh.
+	_ = os.RemoveAll(filepath.Join(cm.cfg.ConfigDir, "clusters", name))
 
-	// Remove cluster from configuration
-	for i, c := range cm.config.Clusters {
+	return cm.cfg.Save()
+}
+
+// List returns all known clusters.
+func (cm *ClusterManager) List() []*ClusterConfig {
+	out := make([]*ClusterConfig, len(cm.cfg.Clusters))
+	copy(out, cm.cfg.Clusters)
+	return out
+}
+
+func (cm *ClusterManager) find(name string) *ClusterConfig {
+	for _, c := range cm.cfg.Clusters {
 		if c.Name == name {
-			cm.config.Clusters = append(cm.config.Clusters[:i], cm.config.Clusters[i+1:]...)
-			break
-		}
-	}
-
-	// Release network resources
-	cm.releaseNetworkResources(cluster)
-
-	if err := cm.config.save(); err != nil {
-		return fmt.Errorf("failed to save configuration: %w", err)
-	}
-
-	return nil
-}
-
-// ListClusters returns information about all clusters
-func ListClusters() error {
-	cm := GetClusterManager()
-	cm.RLock()
-	defer cm.RUnlock()
-
-	if len(cm.config.Clusters) == 0 {
-		fmt.Println("No clusters found")
-		return nil
-	}
-
-	fmt.Println("Clusters:")
-	for _, cluster := range cm.config.Clusters {
-		fmt.Printf("- Name: %s.%s\n", cluster.Name, cluster.Domain)
-		fmt.Printf("  State: %s\n", cluster.State)
-		fmt.Printf("  Version: %s\n", cluster.OCPVersion)
-		fmt.Printf("  Nodes: %d masters, %d workers\n", cluster.MasterCount, cluster.WorkerCount)
-		fmt.Println()
-	}
-
-	return nil
-}
-
-// Helper functions
-
-func (cm *ClusterManager) findCluster(name string) *ClusterConfig {
-	for _, cluster := range cm.config.Clusters {
-		if cluster.Name == name {
-			return cluster
+			return c
 		}
 	}
 	return nil
 }
 
-func (cm *ClusterManager) validateClusterConfig(cfg *ClusterConfig) error {
-	if cfg.Name == "" {
+// validateName checks just the name; used on every Create entry (including resumes).
+func (cm *ClusterManager) validateName(c *ClusterConfig) error {
+	if c.Name == "" {
 		return fmt.Errorf("cluster name is required")
 	}
+	return nil
+}
 
-	if cm.findCluster(cfg.Name) != nil {
-		return fmt.Errorf("cluster %s already exists", cfg.Name)
-	}
-
-	if len(cm.config.Clusters) >= DefaultClustersMax {
+// validateNew checks invariants that only apply to brand-new clusters.
+// Resume Create on an existing cluster skips these.
+func (cm *ClusterManager) validateNew(c *ClusterConfig) error {
+	if len(cm.cfg.Clusters) >= DefaultClustersMax {
 		return fmt.Errorf("maximum number of clusters (%d) reached", DefaultClustersMax)
 	}
-
-	if cfg.MasterCount != 1 {
-		return fmt.Errorf("only single master configuration is supported")
+	if c.MasterCount != 1 {
+		return fmt.Errorf("only single-master clusters are supported")
 	}
-
-	if cfg.WorkerCount > DefaultWorkersMax {
-		return fmt.Errorf("maximum number of workers (%d) exceeded", DefaultWorkersMax)
+	if c.WorkerCount != 0 {
+		// Phase 1 supports SNO only. Workers will be addable via `easyshift
+		// addnode` once that command lands (Phase 4).
+		return fmt.Errorf("Phase 1 supports SNO only: WorkerCount must be 0 (add workers later via addnode)")
 	}
-
+	switch c.NetworkMode {
+	case NetworkModeNAT:
+		if c.Bridge != "" {
+			return fmt.Errorf("NetworkMode=nat is incompatible with --bridge")
+		}
+		if c.MasterMAC != "" || c.MasterIP != "" || c.MachineCIDR != "" {
+			return fmt.Errorf("NetworkMode=nat assigns MAC/IP/CIDR automatically; remove --master-mac/--master-ip/--machine-cidr")
+		}
+	case NetworkModeBridge:
+		if c.Bridge == "" {
+			return fmt.Errorf("NetworkMode=bridge requires --bridge (name of an existing host Linux bridge, e.g. br0)")
+		}
+		if c.MasterMAC == "" {
+			return fmt.Errorf("NetworkMode=bridge requires --master-mac (the MAC you reserved at the router)")
+		}
+		if _, err := net.ParseMAC(c.MasterMAC); err != nil {
+			return fmt.Errorf("invalid --master-mac %q: %w", c.MasterMAC, err)
+		}
+		if c.MasterIP == "" {
+			return fmt.Errorf("NetworkMode=bridge requires --master-ip (the IP the router will reserve for --master-mac)")
+		}
+		if net.ParseIP(c.MasterIP) == nil {
+			return fmt.Errorf("invalid --master-ip %q", c.MasterIP)
+		}
+		if c.MachineCIDR == "" {
+			return fmt.Errorf("could not derive --machine-cidr; pass it explicitly")
+		}
+		if _, _, err := net.ParseCIDR(c.MachineCIDR); err != nil {
+			return fmt.Errorf("invalid --machine-cidr %q: %w", c.MachineCIDR, err)
+		}
+	default:
+		return fmt.Errorf("invalid NetworkMode %q (want %q or %q)", c.NetworkMode, NetworkModeNAT, NetworkModeBridge)
+	}
 	return nil
 }
 
-func (cm *ClusterManager) setClusterDefaults(cfg *ClusterConfig) {
-	if cfg.Domain == "" {
-		cfg.Domain = "local"
+func (cm *ClusterManager) applyDefaults(c *ClusterConfig) {
+	if c.Domain == "" {
+		c.Domain = "local"
 	}
-	if cfg.OCPVersion == "" {
-		cfg.OCPVersion = DefaultOCPVersion
+	if c.OCPVersion == "" {
+		c.OCPVersion = DefaultOCPVersion
 	}
-	if cfg.MasterCPUs == 0 {
-		cfg.MasterCPUs = defaultMasterCPUs
+	if c.MasterCPUs == 0 {
+		c.MasterCPUs = defaultMasterCPUs
 	}
-	if cfg.WorkerCPUs == 0 {
-		cfg.WorkerCPUs = defaultWorkerCPUs
+	if c.WorkerCPUs == 0 {
+		c.WorkerCPUs = defaultWorkerCPUs
 	}
-	if cfg.MasterDiskGB == 0 {
-		cfg.MasterDiskGB = defaultMasterDiskGB
+	if c.MasterDiskGB == 0 {
+		c.MasterDiskGB = defaultMasterDiskGB
 	}
-	if cfg.WorkerDiskGB == 0 {
-		cfg.WorkerDiskGB = defaultWorkerDiskGB
+	if c.WorkerDiskGB == 0 {
+		c.WorkerDiskGB = defaultWorkerDiskGB
 	}
-
-	cfg.State = ClusterStateCreating
-}
-
-// downloadOCPResources downloads required OpenShift resources for the cluster
-func (cm *ClusterManager) downloadOCPResources(cfg *ClusterConfig) error {
-	logrus.Infof("Downloading OpenShift resources for cluster %s", cfg.Name)
-
-	installer := NewInstallManager(cm.config.ConfigDir, cm.http)
-	if err := installer.PrepareInstallation(cfg); err != nil {
-		return fmt.Errorf("failed to prepare installation: %w", err)
+	if c.NetworkMode == "" {
+		c.NetworkMode = NetworkModeNAT
 	}
-
-	return nil
-}
-
-// createIgnitionConfigs creates and configures ignition files
-func (cm *ClusterManager) createIgnitionConfigs(cfg *ClusterConfig) error {
-	logrus.Infof("Creating ignition configs for cluster %s", cfg.Name)
-
-	installer := NewInstallManager(cm.config.ConfigDir, cm.http)
-	if err := installer.generateIgnitionConfigs(cfg); err != nil {
-		return fmt.Errorf("failed to generate ignition configs: %w", err)
+	if c.StoragePool == "" {
+		c.StoragePool = DefaultStoragePool
 	}
-
-	return nil
-}
-
-// createLibvirtNetwork creates the virtual network for the cluster
-func (cm *ClusterManager) createLibvirtNetwork(cfg *ClusterConfig) error {
-	logrus.Infof("Creating libvirt network for cluster %s", cfg.Name)
-
-	libvirt := NewLibvirtManager(cm.config.ConfigDir)
-	if err := libvirt.CreateNetwork(cfg); err != nil {
-		return fmt.Errorf("failed to create libvirt network: %w", err)
-	}
-
-	return nil
-}
-
-// createClusterNodes creates all the required virtual machines for the cluster
-func (cm *ClusterManager) createClusterNodes(cfg *ClusterConfig) error {
-	logrus.Infof("Creating cluster nodes for %s", cfg.Name)
-
-	libvirt := NewLibvirtManager(cm.config.ConfigDir)
-
-	// Create master nodes
-	for i := 0; i < cfg.MasterCount; i++ {
-		nodeName := fmt.Sprintf("master-%d", i)
-		if err := libvirt.CreateVM(cfg, nodeName, true); err != nil {
-			return fmt.Errorf("failed to create master node %s: %w", nodeName, err)
+	// Bridge mode: derive MachineCIDR from MasterIP unless the user gave us
+	// an explicit override on --machine-cidr.
+	if c.NetworkMode == NetworkModeBridge && c.MachineCIDR == "" && c.MasterIP != "" {
+		if cidr, err := DeriveMachineCIDR(c.MasterIP); err == nil {
+			c.MachineCIDR = cidr
 		}
 	}
-
-	// Create worker nodes
-	for i := 0; i < cfg.WorkerCount; i++ {
-		nodeName := fmt.Sprintf("worker-%d", i)
-		if err := libvirt.CreateVM(cfg, nodeName, false); err != nil {
-			return fmt.Errorf("failed to create worker node %s: %w", nodeName, err)
-		}
-	}
-
-	return nil
 }
 
-// startClusterNodes starts all nodes in the cluster
-func (cm *ClusterManager) startClusterNodes(cfg *ClusterConfig) error {
-	logrus.Infof("Starting cluster nodes for %s", cfg.Name)
-
-	libvirt := NewLibvirtManager(cm.config.ConfigDir)
-
-	// Start master nodes
-	for i := 0; i < cfg.MasterCount; i++ {
-		nodeName := fmt.Sprintf("master-%d-%s", i, cfg.Name)
-		if err := libvirt.StartVM(cfg, nodeName); err != nil {
-			return fmt.Errorf("failed to start master node %s: %w", nodeName, err)
-		}
+func (cm *ClusterManager) vmNames(c *ClusterConfig) []string {
+	names := make([]string, 0, c.MasterCount+c.WorkerCount)
+	for i := 0; i < c.MasterCount; i++ {
+		names = append(names, fmt.Sprintf("master-%d-%s", i, c.Name))
 	}
-
-	// Start worker nodes
-	for i := 0; i < cfg.WorkerCount; i++ {
-		nodeName := fmt.Sprintf("worker-%d-%s", i, cfg.Name)
-		if err := libvirt.StartVM(cfg, nodeName); err != nil {
-			return fmt.Errorf("failed to start worker node %s: %w", nodeName, err)
-		}
+	for i := 0; i < c.WorkerCount; i++ {
+		names = append(names, fmt.Sprintf("worker-%d-%s", i, c.Name))
 	}
-
-	return nil
-}
-
-// stopClusterNodes stops all nodes in the cluster
-func (cm *ClusterManager) stopClusterNodes(cfg *ClusterConfig) error {
-	logrus.Infof("Stopping cluster nodes for %s", cfg.Name)
-
-	libvirt := NewLibvirtManager(cm.config.ConfigDir)
-
-	// Stop worker nodes first
-	for i := 0; i < cfg.WorkerCount; i++ {
-		nodeName := fmt.Sprintf("worker-%d-%s", i, cfg.Name)
-		if err := libvirt.StopVM(nodeName); err != nil {
-			logrus.Warnf("Failed to stop worker node %s: %v", nodeName, err)
-		}
-	}
-
-	// Stop master nodes last
-	for i := 0; i < cfg.MasterCount; i++ {
-		nodeName := fmt.Sprintf("master-%d-%s", i, cfg.Name)
-		if err := libvirt.StopVM(nodeName); err != nil {
-			logrus.Warnf("Failed to stop master node %s: %v", nodeName, err)
-		}
-	}
-
-	return nil
-}
-
-// deleteClusterNodes deletes all nodes in the cluster
-func (cm *ClusterManager) deleteClusterNodes(cfg *ClusterConfig) error {
-	logrus.Infof("Deleting cluster nodes for %s", cfg.Name)
-
-	libvirt := NewLibvirtManager(cm.config.ConfigDir)
-
-	// Delete worker nodes first
-	for i := 0; i < cfg.WorkerCount; i++ {
-		nodeName := fmt.Sprintf("worker-%d-%s", i, cfg.Name)
-		if err := libvirt.DeleteVM(nodeName); err != nil {
-			logrus.Warnf("Failed to delete worker node %s: %v", nodeName, err)
-		}
-	}
-
-	// Delete master nodes last
-	for i := 0; i < cfg.MasterCount; i++ {
-		nodeName := fmt.Sprintf("master-%d-%s", i, cfg.Name)
-		if err := libvirt.DeleteVM(nodeName); err != nil {
-			logrus.Warnf("Failed to delete master node %s: %v", nodeName, err)
-		}
-	}
-
-	return nil
-}
-
-// allocateNetworkResources allocates network resources for the cluster
-func (cm *ClusterManager) allocateNetworkResources(cfg *ClusterConfig) error {
-	logrus.Infof("Allocating network resources for cluster %s", cfg.Name)
-
-	networkManager := GetNetworkManager()
-	if err := networkManager.AllocateNetworkResources(cfg); err != nil {
-		return fmt.Errorf("failed to allocate network resources: %w", err)
-	}
-
-	return nil
-}
-
-// releaseNetworkResources releases network resources for the cluster
-func (cm *ClusterManager) releaseNetworkResources(cfg *ClusterConfig) {
-	logrus.Infof("Releasing network resources for cluster %s", cfg.Name)
-
-	networkManager := GetNetworkManager()
-	networkManager.ReleaseNetworkResources(cfg)
+	return names
 }

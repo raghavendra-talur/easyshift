@@ -1,166 +1,124 @@
 package easyshift
 
 import (
+	"crypto/rand"
 	"fmt"
-	"math/rand"
 	"net"
-	"strings"
-	"sync"
-	"time"
 )
 
-const (
-	macPrefix = "52:54:00"
-)
+const macPrefix = "52:54:00"
 
-// NetworkManager handles IP and MAC address allocation
-type NetworkManager struct {
-	sync.Mutex
-	usedIPs  map[string]bool
-	usedMACs map[string]bool
+// NetworkAllocator allocates IP and MAC addresses for cluster nodes,
+// recording usage in Config.GlobalState. It is not a side-effect boundary
+// (pure data manipulation), so it is a plain struct rather than an interface.
+type NetworkAllocator struct {
+	cfg *Config
 }
 
-var (
-	networkManager *NetworkManager
-	networkOnce    sync.Once
-)
-
-// GetNetworkManager returns the singleton network manager instance
-func GetNetworkManager() *NetworkManager {
-	networkOnce.Do(func() {
-		networkManager = &NetworkManager{
-			usedIPs:  make(map[string]bool),
-			usedMACs: make(map[string]bool),
-		}
-		// Load used IPs and MACs from config
-		cfg := GetConfig()
-		for _, cluster := range cfg.Clusters {
-			for _, ip := range cluster.IPAddresses {
-				networkManager.usedIPs[ip] = true
-			}
-			for _, mac := range cluster.MACAddresses {
-				networkManager.usedMACs[mac] = true
-			}
-		}
-	})
-	return networkManager
+// NewNetworkAllocator returns an allocator that records state in cfg.GlobalState.
+func NewNetworkAllocator(cfg *Config) *NetworkAllocator {
+	return &NetworkAllocator{cfg: cfg}
 }
 
-// AllocateNetworkResources allocates IP and MAC addresses for a cluster
-func (nm *NetworkManager) AllocateNetworkResources(cluster *ClusterConfig) error {
-	nm.Lock()
-	defer nm.Unlock()
-
-	// Calculate total nodes
-	totalNodes := cluster.MasterCount + cluster.WorkerCount
-
-	// Allocate subnet
-	//subnet := fmt.Sprintf("%s.0/24", BaseNetworkRange)
-	cluster.NetworkSubnet = BaseNetworkRange
-
-	// Allocate IPs and MACs
-	ips := make([]string, totalNodes)
-	macs := make([]string, totalNodes)
-
-	// Allocate for master nodes first
-	for i := 0; i < cluster.MasterCount; i++ {
-		ip, err := nm.allocateIP()
+// Allocate populates cluster.MACAddresses for every node and, in NAT mode,
+// also populates cluster.IPAddresses. In bridge mode IPs come from the LAN
+// DHCP server so we do not pre-allocate them.
+func (a *NetworkAllocator) Allocate(cluster *ClusterConfig) error {
+	total := cluster.MasterCount + cluster.WorkerCount
+	macs := make([]string, total)
+	for i := 0; i < total; i++ {
+		mac, err := a.allocateMAC()
 		if err != nil {
-			return fmt.Errorf("failed to allocate IP for master-%d: %w", i, err)
+			return fmt.Errorf("allocate mac for node %d: %w", i, err)
 		}
-		mac, err := nm.allocateMAC()
-		if err != nil {
-			return fmt.Errorf("failed to allocate MAC for master-%d: %w", i, err)
-		}
-		ips[i] = ip
 		macs[i] = mac
 	}
-
-	// Allocate for worker nodes
-	for i := 0; i < cluster.WorkerCount; i++ {
-		ip, err := nm.allocateIP()
-		if err != nil {
-			return fmt.Errorf("failed to allocate IP for worker-%d: %w", i, err)
-		}
-		mac, err := nm.allocateMAC()
-		if err != nil {
-			return fmt.Errorf("failed to allocate MAC for worker-%d: %w", i, err)
-		}
-		ips[cluster.MasterCount+i] = ip
-		macs[cluster.MasterCount+i] = mac
-	}
-
-	cluster.IPAddresses = ips
 	cluster.MACAddresses = macs
 
+	if cluster.NetworkMode != NetworkModeNAT {
+		// Direct mode: no static IPs, no subnet to record.
+		cluster.IPAddresses = nil
+		cluster.NetworkSubnet = ""
+		return nil
+	}
+
+	ips := make([]string, total)
+	for i := 0; i < total; i++ {
+		ip, err := a.allocateIP()
+		if err != nil {
+			return fmt.Errorf("allocate ip for node %d: %w", i, err)
+		}
+		ips[i] = ip
+	}
+	cluster.IPAddresses = ips
+	cluster.NetworkSubnet = BaseNetworkRange
 	return nil
 }
 
-// ReleaseNetworkResources releases allocated IP and MAC addresses
-func (nm *NetworkManager) ReleaseNetworkResources(cluster *ClusterConfig) {
-	nm.Lock()
-	defer nm.Unlock()
-
+// Release marks the cluster's IPs and MACs as free.
+func (a *NetworkAllocator) Release(cluster *ClusterConfig) {
 	for _, ip := range cluster.IPAddresses {
-		delete(nm.usedIPs, ip)
+		delete(a.cfg.GlobalState.UsedIPs, ip)
 	}
 	for _, mac := range cluster.MACAddresses {
-		delete(nm.usedMACs, mac)
+		delete(a.cfg.GlobalState.UsedMACs, mac)
 	}
 }
 
-func (nm *NetworkManager) allocateIP() (string, error) {
+func (a *NetworkAllocator) allocateIP() (string, error) {
 	for i := NetworkStart; i <= NetworkEnd; i++ {
 		ip := fmt.Sprintf("%s.%d", BaseNetworkRange, i)
-		if !nm.usedIPs[ip] {
-			nm.usedIPs[ip] = true
+		if !a.cfg.GlobalState.UsedIPs[ip] {
+			a.cfg.GlobalState.UsedIPs[ip] = true
 			return ip, nil
 		}
 	}
-	return "", fmt.Errorf("no available IP addresses")
+	return "", fmt.Errorf("no available IP addresses in range %s.%d-%d",
+		BaseNetworkRange, NetworkStart, NetworkEnd)
 }
 
-func (nm *NetworkManager) allocateMAC() (string, error) {
-	rand.Seed(time.Now().UnixNano())
-	for i := 0; i < 100; i++ { // Try 100 times
-		mac := generateMAC()
-		if !nm.usedMACs[mac] {
-			nm.usedMACs[mac] = true
+func (a *NetworkAllocator) allocateMAC() (string, error) {
+	for attempt := 0; attempt < 100; attempt++ {
+		mac, err := generateMAC()
+		if err != nil {
+			return "", err
+		}
+		if !a.cfg.GlobalState.UsedMACs[mac] {
+			a.cfg.GlobalState.UsedMACs[mac] = true
 			return mac, nil
 		}
 	}
-	return "", fmt.Errorf("failed to allocate MAC address")
+	return "", fmt.Errorf("failed to allocate unique MAC after 100 attempts")
 }
 
-func generateMAC() string {
-	bytes := make([]string, 3)
-	for i := 0; i < 3; i++ {
-		bytes[i] = fmt.Sprintf("%02x", rand.Intn(256))
+func generateMAC() (string, error) {
+	var b [3]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("read random bytes: %w", err)
 	}
-	return fmt.Sprintf("%s:%s", macPrefix, strings.Join(bytes, ":"))
+	return fmt.Sprintf("%s:%02x:%02x:%02x", macPrefix, b[0], b[1], b[2]), nil
 }
 
-// IsIPAvailable checks if an IP address is available
-func (nm *NetworkManager) IsIPAvailable(ip string) bool {
-	nm.Lock()
-	defer nm.Unlock()
-	return !nm.usedIPs[ip]
+// ValidateIP returns true if s is a syntactically valid IP address.
+func ValidateIP(s string) bool { return net.ParseIP(s) != nil }
+
+// DeriveMachineCIDR returns the /24 containing masterIP. Errors if masterIP
+// is not a valid IPv4 address. The /24 default matches the most common
+// home/LAN setup; users with /23 or /22 LANs should set --machine-cidr.
+func DeriveMachineCIDR(masterIP string) (string, error) {
+	ip := net.ParseIP(masterIP)
+	if ip == nil {
+		return "", fmt.Errorf("invalid IP %q", masterIP)
+	}
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return "", fmt.Errorf("not an IPv4 address: %q", masterIP)
+	}
+	return fmt.Sprintf("%d.%d.%d.0/24", ip4[0], ip4[1], ip4[2]), nil
 }
 
-// IsMACAvailable checks if a MAC address is available
-func (nm *NetworkManager) IsMACAvailable(mac string) bool {
-	nm.Lock()
-	defer nm.Unlock()
-	return !nm.usedMACs[mac]
-}
-
-// ValidateIP validates an IP address format
-func ValidateIP(ip string) bool {
-	return net.ParseIP(ip) != nil
-}
-
-// ValidateMAC validates a MAC address format
-func ValidateMAC(mac string) bool {
-	_, err := net.ParseMAC(mac)
+// ValidateMAC returns true if s is a syntactically valid MAC address.
+func ValidateMAC(s string) bool {
+	_, err := net.ParseMAC(s)
 	return err == nil
 }

@@ -23,3 +23,18 @@ go.work.sum
 
 # env file
 .env
+
+# easyshift compiled binary (built at repo root by `make build`)
+/easyshift
+
+# Downloaded OpenShift tooling (openshift-install / openshift-client tarballs)
+*.tar.gz
+
+# Secrets — NEVER commit these
+*-token.txt
+cloudflare-token
+pull-secret
+pull-secret*.txt
+
+# Local reference material
+yakko-deep-dive.html
