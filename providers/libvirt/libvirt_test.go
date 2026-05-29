@@ -2,6 +2,7 @@ package libvirt_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -52,6 +53,38 @@ func TestLibvirtVMManager_CreateArgs(t *testing.T) {
 	}
 	if !hasFlagValue(call.Args, "--network") {
 		t.Errorf("expected --network: %s", joined)
+	}
+}
+
+// TestCreateNetwork_UndefinesOnFailedStart confirms that when net-start fails
+// after net-define succeeded, CreateNetwork undefines the network so a leftover
+// defined-but-inactive network can't block the next attempt's net-define.
+func TestCreateNetwork_UndefinesOnFailedStart(t *testing.T) {
+	cmd := &fakes.CommandRunner{
+		RunFunc: func(_ string, args []string) ([]byte, error) {
+			if contains(args, "net-start") {
+				return nil, errors.New("boom")
+			}
+			return nil, nil
+		},
+	}
+	p := libvirt.NewLibvirtNetworkProvisioner(cmd)
+
+	err := p.CreateNetwork(context.Background(), interfaces.NetworkSpec{
+		Name:   "easyshift-natdev",
+		Subnet: "192.168.126",
+	})
+	if err == nil || !strings.Contains(err.Error(), "net-start") {
+		t.Fatalf("expected net-start failure, got %v", err)
+	}
+	var sawUndefine bool
+	for _, call := range cmd.Calls {
+		if contains(call.Args, "net-undefine") {
+			sawUndefine = true
+		}
+	}
+	if !sawUndefine {
+		t.Error("expected net-undefine cleanup after a failed net-start")
 	}
 }
 

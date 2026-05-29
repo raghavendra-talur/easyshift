@@ -135,6 +135,7 @@ func newCreateCommand(mgr **app.ClusterManager) *cobra.Command {
 		dnsZone     string
 		tlsEmail    string
 		tlsStaging  bool
+		magicDNS    string
 	)
 
 	cmd := &cobra.Command{
@@ -160,14 +161,16 @@ func newCreateCommand(mgr **app.ClusterManager) *cobra.Command {
 				DNSZone:     dnsZone,
 				TLSEmail:    tlsEmail,
 				TLSStaging:  tlsStaging,
+				MagicDNS:    magicDNS,
 			})
 		},
 	}
 
 	cmd.Flags().StringVarP(&name, "name", "n", "", "Cluster name")
-	cmd.Flags().StringVarP(&baseDomain, "base-domain", "D", "local",
-		"OpenShift baseDomain; the cluster's API and ingress live under <name>.<base-domain> "+
-			"(e.g. api.<name>.<base-domain>). In bridge mode you must create matching DNS records.")
+	cmd.Flags().StringVarP(&baseDomain, "base-domain", "D", "",
+		"OpenShift baseDomain; the cluster's API and ingress live under <name>.<base-domain>. "+
+			"Defaults to 'local' (bridge) or a derived <ip>.sslip.io (NAT, via --magic-dns). "+
+			"Set it to use your own domain (disables --magic-dns auto).")
 	cmd.Flags().StringVarP(&ocpVersion, "version", "v", config.DefaultOCPVersion, "OpenShift version")
 	cmd.Flags().IntVarP(&masterCount, "masters", "m", 1, "Number of master nodes (must be 1)")
 	cmd.Flags().IntVarP(&workerCount, "workers", "w", 0, "Number of worker nodes (Phase 1: must be 0; add later via addnode)")
@@ -196,6 +199,10 @@ func newCreateCommand(mgr **app.ClusterManager) *cobra.Command {
 	cmd.Flags().BoolVar(&tlsStaging, "tls-staging", false,
 		"Use Let's Encrypt's staging endpoint (untrusted certs, but no production rate limits). "+
 			"Recommended while iterating; flip to false for the final run.")
+	cmd.Flags().StringVar(&magicDNS, "magic-dns", config.MagicDNSAuto,
+		"Wildcard DNS service so cluster names resolve to the master IP with no records to manage: "+
+			"'auto' (NAT -> sslip.io, bridge -> off), 'sslip.io', 'nip.io', or 'off'. "+
+			"Mutually exclusive with --dns-provider.")
 
 	_ = cmd.MarkFlagRequired("name")
 	return cmd

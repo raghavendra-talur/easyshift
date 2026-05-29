@@ -202,10 +202,38 @@ func (cm *ClusterManager) validateName(c *config.ClusterConfig) error {
 	return nil
 }
 
+// resolveMagicDNS turns the --magic-dns flag value ("auto"/"off"/service)
+// into a concrete service on c.MagicDNS ("" means off). Auto picks sslip.io
+// for NAT mode when the user didn't supply their own base domain; everything
+// else (bridge mode, or an explicit base domain) resolves to off.
+func resolveMagicDNS(c *config.ClusterConfig) {
+	switch c.MagicDNS {
+	case "", config.MagicDNSAuto:
+		if c.NetworkMode == config.NetworkModeNAT && c.Domain == "" {
+			c.MagicDNS = config.MagicDNSSslip
+		} else {
+			c.MagicDNS = ""
+		}
+	case config.MagicDNSOff:
+		c.MagicDNS = ""
+	}
+}
+
 // validateNew checks invariants that only apply to brand-new clusters.
 func (cm *ClusterManager) validateNew(c *config.ClusterConfig) error {
 	if len(cm.cfg.Clusters) >= config.DefaultClustersMax {
 		return fmt.Errorf("maximum number of clusters (%d) reached", config.DefaultClustersMax)
+	}
+	if !config.ValidMagicDNS(c.MagicDNS) {
+		return fmt.Errorf("unsupported --magic-dns %q (want auto, off, sslip.io, or nip.io)", c.MagicDNS)
+	}
+	if c.MagicDNS != "" {
+		if c.DNSProvider != "" {
+			return fmt.Errorf("--magic-dns and --dns-provider are mutually exclusive: use a wildcard service OR API-managed records, not both")
+		}
+		if c.Domain != "" {
+			return fmt.Errorf("--magic-dns derives the base domain from the master IP; remove --base-domain")
+		}
 	}
 	if c.MasterCount != 1 {
 		return fmt.Errorf("only single-master clusters are supported")
@@ -250,7 +278,15 @@ func (cm *ClusterManager) validateNew(c *config.ClusterConfig) error {
 }
 
 func (cm *ClusterManager) applyDefaults(c *config.ClusterConfig) {
-	if c.Domain == "" {
+	if c.NetworkMode == "" {
+		c.NetworkMode = config.NetworkModeNAT
+	}
+	// Resolve --magic-dns "auto"/"off" to a concrete service (or "" = off)
+	// before defaulting Domain. When magic DNS is active, Domain is left
+	// empty here and derived from the master IP in the allocate-network
+	// stage (NAT IPs aren't known until then).
+	resolveMagicDNS(c)
+	if c.MagicDNS == "" && c.Domain == "" {
 		c.Domain = "local"
 	}
 	if c.OCPVersion == "" {
@@ -267,9 +303,6 @@ func (cm *ClusterManager) applyDefaults(c *config.ClusterConfig) {
 	}
 	if c.WorkerDiskGB == 0 {
 		c.WorkerDiskGB = defaultWorkerDiskGB
-	}
-	if c.NetworkMode == "" {
-		c.NetworkMode = config.NetworkModeNAT
 	}
 	if c.StoragePool == "" {
 		c.StoragePool = config.DefaultStoragePool

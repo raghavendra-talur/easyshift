@@ -26,9 +26,7 @@ type CommandCall struct {
 }
 
 // CommandRunner is a fake interfaces.CommandRunner. All commands succeed and
-// produce empty output unless Output or Err is set. Failures lets a test
-// fail specific commands by name (e.g. simulate libvirt being unreachable)
-// without affecting other commands.
+// produce empty output unless Output, Err, or RunFunc is set.
 type CommandRunner struct {
 	mu     sync.Mutex
 	Calls  []CommandCall
@@ -37,6 +35,9 @@ type CommandRunner struct {
 	// StreamStdout is written to the stdout writer of RunStreaming calls
 	// (used to feed `openshift-install coreos print-stream-json`).
 	StreamStdout []byte
+	// RunFunc, if set, overrides Run's return (after the call is recorded),
+	// letting a test fail specific invocations by inspecting name/args.
+	RunFunc func(name string, args []string) ([]byte, error)
 }
 
 func (c *CommandRunner) record(call CommandCall) {
@@ -59,6 +60,9 @@ func (c *CommandRunner) Run(_ context.Context, name string, args ...string) ([]b
 				break
 			}
 		}
+	}
+	if c.RunFunc != nil {
+		return c.RunFunc(name, args)
 	}
 	return c.Output, c.Err
 }

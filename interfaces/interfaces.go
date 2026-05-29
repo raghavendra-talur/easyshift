@@ -68,6 +68,13 @@ type NetworkSpec struct {
 	Bridge string
 	Subnet string // e.g. "192.168.140"
 	Domain string // libvirt DNS domain
+	// ReserveMAC/ReserveIP/ReserveHostname, when all set, add a DHCP
+	// reservation that pins ReserveIP to ReserveMAC and hands the VM
+	// ReserveHostname via DHCP option 12 (so RHCOS's node-valid-hostname is
+	// satisfied without an SSH hostname injector).
+	ReserveMAC      string
+	ReserveIP       string
+	ReserveHostname string
 }
 
 // NetworkProvisioner abstracts virtual network creation (libvirt NAT today).

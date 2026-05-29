@@ -16,7 +16,10 @@ const (
 	DefaultClustersMax  = 3
 	DefaultWorkersMax   = 3
 
-	BaseNetworkRange = "192.168.1"
+	// BaseNetworkRange is the /24 prefix for NAT-mode libvirt networks. It
+	// deliberately avoids the common home-LAN ranges (192.168.0/1.x) so the
+	// virtual network doesn't collide with the host's real LAN.
+	BaseNetworkRange = "192.168.126"
 	NetworkStart     = 5
 	NetworkEnd       = 20
 
@@ -44,6 +47,20 @@ const (
 	// user is responsible for the bridge, a DHCP reservation, and DNS records
 	// pointing api.<name>.<domain> and *.apps.<name>.<domain> at the master.
 	NetworkModeBridge = "bridge"
+
+	// MagicDNS* select an IP-encoding wildcard DNS service so the cluster's
+	// names resolve to the master IP with no DNS server of our own. The
+	// values are string-valued (not a bool) so additional services slot in
+	// without a new flag.
+	//
+	//   MagicDNSAuto  - NAT mode -> sslip.io; bridge mode -> off.
+	//   MagicDNSSslip - force sslip.io (any mode), keyed on the master IP.
+	//   MagicDNSNip   - force nip.io.
+	//   MagicDNSOff   - disabled; use --base-domain + manual/--dns-provider.
+	MagicDNSAuto  = "auto"
+	MagicDNSSslip = "sslip.io"
+	MagicDNSNip   = "nip.io"
+	MagicDNSOff   = "off"
 
 	// ClusterState* are the persisted values of ClusterConfig.State.
 	ClusterStateNone     = "none"
@@ -118,6 +135,12 @@ type ClusterConfig struct {
 	// endpoint. Useful while iterating because staging has much higher
 	// rate limits, but issues certs signed by an untrusted root.
 	TLSStaging bool `json:"tlsStaging,omitempty"`
+	// MagicDNS, when set to a wildcard service (sslip.io / nip.io), makes
+	// easyshift derive Domain as "<masterIP>.<service>" so every cluster
+	// name resolves to the master IP with no DNS records to manage. Empty
+	// means off (use Domain + manual/provider DNS). Resolved from the
+	// --magic-dns flag's "auto"/"off" by the manager before any stage runs.
+	MagicDNS string `json:"magicDNS,omitempty"`
 
 	NetworkSubnet string   `json:"networkSubnet"`
 	IPAddresses   []string `json:"ipAddresses"`

@@ -18,6 +18,36 @@ func (c *ClusterConfig) FQDN() string {
 	return c.Name + "." + c.Domain
 }
 
+// PrimaryMasterIP is the master's IP regardless of network mode: the
+// user-supplied MasterIP in bridge mode, or the first allocated address in
+// NAT mode (populated by the allocate-network stage).
+func (c *ClusterConfig) PrimaryMasterIP() string {
+	if c.MasterIP != "" {
+		return c.MasterIP
+	}
+	if len(c.IPAddresses) > 0 {
+		return c.IPAddresses[0]
+	}
+	return ""
+}
+
+// MagicDomain builds the wildcard-DNS base domain for an IP. sslip.io and
+// nip.io both resolve "<anything>.<ip>.<service>" to <ip>, giving the
+// cluster's api/api-int/*.apps names for free.
+func MagicDomain(ip, service string) string {
+	return ip + "." + service
+}
+
+// ValidMagicDNS reports whether s is a supported wildcard-DNS service (or
+// empty, meaning off).
+func ValidMagicDNS(s string) bool {
+	switch s {
+	case "", MagicDNSSslip, MagicDNSNip:
+		return true
+	}
+	return false
+}
+
 // DNSZoneOrDomain returns the parent DNS zone, defaulting to the base Domain.
 func (c *ClusterConfig) DNSZoneOrDomain() string {
 	if c.DNSZone != "" {

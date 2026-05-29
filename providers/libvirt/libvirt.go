@@ -195,26 +195,9 @@ func NewLibvirtNetworkProvisioner(cmd interfaces.CommandRunner) *LibvirtNetworkP
 	return &LibvirtNetworkProvisioner{cmd: cmd}
 }
 
-const libvirtNetworkXMLTemplate = `<network>
-  <name>%s</name>
-  <forward mode='nat'>
-    <nat>
-      <port start='1024' end='65535'/>
-    </nat>
-  </forward>
-  <bridge name='%s' stp='on' delay='0'/>
-  <domain name='%s' localOnly='yes'/>
-  <ip address='%s.1' netmask='255.255.255.0'>
-    <dhcp>
-      <range start='%s.5' end='%s.254'/>
-    </dhcp>
-  </ip>
-</network>`
-
 // CreateNetwork defines, starts, and autostart-enables a libvirt NAT network.
 func (p *LibvirtNetworkProvisioner) CreateNetwork(ctx context.Context, spec interfaces.NetworkSpec) error {
-	xml := fmt.Sprintf(libvirtNetworkXMLTemplate,
-		spec.Name, spec.Bridge, spec.Domain, spec.Subnet, spec.Subnet, spec.Subnet)
+	xml := buildNetworkXML(spec)
 
 	xmlFile, err := writeTempFile(spec.Name+"-network-*.xml", []byte(xml))
 	if err != nil {
@@ -225,13 +208,60 @@ func (p *LibvirtNetworkProvisioner) CreateNetwork(ctx context.Context, spec inte
 	if _, err := p.cmd.Run(ctx, virshCmd, "net-define", xmlFile); err != nil {
 		return fmt.Errorf("net-define %s: %w", spec.Name, err)
 	}
+	// From here the network is defined. If a later step fails, undefine it so
+	// the stage isn't left with a defined-but-inactive network that blocks the
+	// next attempt's net-define (the runner won't roll back a stage whose
+	// Apply returned an error, so we self-clean here).
 	if _, err := p.cmd.Run(ctx, virshCmd, "net-start", spec.Name); err != nil {
+		_, _ = p.cmd.Run(ctx, virshCmd, "net-undefine", spec.Name)
 		return fmt.Errorf("net-start %s: %w", spec.Name, err)
 	}
 	if _, err := p.cmd.Run(ctx, virshCmd, "net-autostart", spec.Name); err != nil {
+		_, _ = p.cmd.Run(ctx, virshCmd, "net-destroy", spec.Name)
+		_, _ = p.cmd.Run(ctx, virshCmd, "net-undefine", spec.Name)
 		return fmt.Errorf("net-autostart %s: %w", spec.Name, err)
 	}
 	return nil
+}
+
+// buildNetworkXML assembles the libvirt NAT network definition. The <domain>
+// element is included only when spec.Domain is set (and is deliberately
+// omitted in magic-DNS mode so dnsmasq forwards the wildcard-service queries
+// upstream instead of answering them authoritatively). A <host> DHCP
+// reservation is added when spec.ReserveMAC is set, pinning the IP and
+// supplying the VM's hostname via DHCP option 12.
+func buildNetworkXML(spec interfaces.NetworkSpec) string {
+	var domain string
+	if spec.Domain != "" {
+		domain = fmt.Sprintf("\n  <domain name='%s' localOnly='yes'/>", spec.Domain)
+	}
+	var reservation string
+	if spec.ReserveMAC != "" {
+		reservation = fmt.Sprintf("\n      <host mac='%s' name='%s' ip='%s'/>",
+			spec.ReserveMAC, spec.ReserveHostname, spec.ReserveIP)
+	}
+	// The bridge *interface* name is capped at 15 chars by the kernel
+	// (IFNAMSIZ), so we only set it when the caller supplies a short one;
+	// otherwise libvirt auto-assigns a virbrN. The network *name* (which is
+	// what VMs attach to) has no such limit.
+	bridge := "<bridge stp='on' delay='0'/>"
+	if spec.Bridge != "" {
+		bridge = fmt.Sprintf("<bridge name='%s' stp='on' delay='0'/>", spec.Bridge)
+	}
+	return fmt.Sprintf(`<network>
+  <name>%s</name>
+  <forward mode='nat'>
+    <nat>
+      <port start='1024' end='65535'/>
+    </nat>
+  </forward>
+  %s%s
+  <ip address='%s.1' netmask='255.255.255.0'>
+    <dhcp>
+      <range start='%s.5' end='%s.254'/>%s
+    </dhcp>
+  </ip>
+</network>`, spec.Name, bridge, domain, spec.Subnet, spec.Subnet, spec.Subnet, reservation)
 }
 
 // DeleteNetwork destroys and undefines a libvirt network.

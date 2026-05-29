@@ -42,8 +42,8 @@ func (cm *ClusterManager) Status(ctx context.Context, name string) (*StatusRepor
 		rep.Checks = append(rep.Checks, cm.checkARP(c))
 		rep.Checks = append(rep.Checks, cm.checkDNS(ctx, c, rep.FQDN))
 	}
-	if c.MasterIP != "" {
-		rep.Checks = append(rep.Checks, cm.checkAPIPort(c.MasterIP))
+	if ip := c.PrimaryMasterIP(); ip != "" {
+		rep.Checks = append(rep.Checks, cm.checkAPIPort(ip))
 	}
 	rep.Checks = append(rep.Checks, cm.checkAPIDNSEnd2End(rep.FQDN))
 

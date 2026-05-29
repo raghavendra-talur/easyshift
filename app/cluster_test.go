@@ -498,6 +498,85 @@ func TestCreateCluster_HonorsCustomStoragePool(t *testing.T) {
 	}
 }
 
+// newNATCluster returns a NAT-mode cluster with no base domain, so magic-DNS
+// auto kicks in.
+func newNATCluster(name string) *config.ClusterConfig {
+	return &config.ClusterConfig{
+		Name:        name,
+		OCPVersion:  "4.14.0",
+		MasterCount: 1,
+		WorkerCount: 0,
+		MasterRAM:   16000,
+		NetworkMode: config.NetworkModeNAT,
+		MagicDNS:    config.MagicDNSAuto,
+	}
+}
+
+// TestCreateCluster_NAT_MagicDNS confirms the zero-config NAT path: magic-DNS
+// auto resolves to sslip.io, the base domain is derived from the allocated
+// NAT IP, the libvirt network gets a DHCP reservation (with the master
+// hostname, no <domain> element), and no DNS preflight runs.
+func TestCreateCluster_NAT_MagicDNS(t *testing.T) {
+	cfg, deps, bundle := newTestEnv(t)
+	c := newNATCluster("natmagic")
+	// Intentionally seed NO DNS records: if the resolver preflight ran, Create
+	// would fail. It must be skipped under magic-DNS.
+
+	mgr := app.NewClusterManager(cfg, deps)
+	if err := mgr.Create(context.Background(), c); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if c.MagicDNS != config.MagicDNSSslip {
+		t.Errorf("MagicDNS resolved: got %q want %q", c.MagicDNS, config.MagicDNSSslip)
+	}
+	// First NAT address is 192.168.126.5 (BaseNetworkRange + NetworkStart).
+	wantDomain := "192.168.126.5.sslip.io"
+	if c.Domain != wantDomain {
+		t.Errorf("derived domain: got %q want %q", c.Domain, wantDomain)
+	}
+	if got := len(bundle.Net.Created); got != 1 {
+		t.Fatalf("network creations: got %d want 1", got)
+	}
+	net := bundle.Net.Created[0]
+	if net.ReserveIP != "192.168.126.5" || net.ReserveHostname != "master-0" || net.ReserveMAC == "" {
+		t.Errorf("DHCP reservation: got %+v want IP=192.168.126.5 host=master-0 mac!=\"\"", net)
+	}
+	if net.Domain != "" {
+		t.Errorf("magic-DNS network must omit <domain> (got %q) so sslip.io forwards upstream", net.Domain)
+	}
+}
+
+// TestCreateCluster_MagicDNS_RejectsDNSProvider confirms magic-DNS and
+// --dns-provider are mutually exclusive.
+func TestCreateCluster_MagicDNS_RejectsDNSProvider(t *testing.T) {
+	cfg, deps, _ := newTestEnv(t)
+	c := newNATCluster("conflict")
+	c.MagicDNS = config.MagicDNSSslip
+	c.DNSProvider = config.DNSProviderCloudflare
+
+	mgr := app.NewClusterManager(cfg, deps)
+	err := mgr.Create(context.Background(), c)
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("expected mutual-exclusion error, got %v", err)
+	}
+}
+
+// TestCreateCluster_MagicDNS_RejectsExplicitBaseDomain confirms forcing a
+// magic-DNS service while also setting a base domain is rejected.
+func TestCreateCluster_MagicDNS_RejectsExplicitBaseDomain(t *testing.T) {
+	cfg, deps, _ := newTestEnv(t)
+	c := newNATCluster("conflict2")
+	c.MagicDNS = config.MagicDNSSslip
+	c.Domain = "example.com"
+
+	mgr := app.NewClusterManager(cfg, deps)
+	err := mgr.Create(context.Background(), c)
+	if err == nil || !strings.Contains(err.Error(), "remove --base-domain") {
+		t.Fatalf("expected explicit-base-domain rejection, got %v", err)
+	}
+}
+
 // TestCreateCluster_PreflightFailsWhenDefaultPoolMissing confirms the
 // storage-pool preflight aborts Create when the default pool is absent.
 func TestCreateCluster_PreflightFailsWhenDefaultPoolMissing(t *testing.T) {

@@ -35,10 +35,12 @@ func (s *Stage) Preflight(ctx context.Context, sc *interfaces.StageContext) erro
 	if err := config.ValidatePullSecretJSON(sc.Config.ConfigDir); err != nil {
 		return err
 	}
-	if sc.Cluster.NetworkMode == config.NetworkModeBridge && sc.Cluster.DNSProvider == "" {
+	if sc.Cluster.NetworkMode == config.NetworkModeBridge && sc.Cluster.DNSProvider == "" && sc.Cluster.MagicDNS == "" {
 		// User manages DNS by hand — verify records resolve before burning
 		// 30+ minutes on an unreachable-API install. When DNSProvider is set,
-		// easyshift creates the records itself in the upsert-dns stage.
+		// easyshift creates the records itself in the upsert-dns stage; when
+		// MagicDNS is set, a wildcard service resolves the names with no
+		// records to check.
 		if err := s.host.LookPath("dig"); err != nil {
 			return fmt.Errorf("DNS preflight needs `dig`: %w\n  hint: install bind-utils (Fedora/RHEL) or dnsutils (Debian/Ubuntu)", err)
 		}

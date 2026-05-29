@@ -28,6 +28,7 @@ func (*Stage) Apply(_ context.Context, sc *interfaces.StageContext) error {
 		sc.Cluster.MACAddresses = []string{sc.Cluster.MasterMAC}
 		sc.Cluster.IPAddresses = []string{sc.Cluster.MasterIP}
 		sc.Config.GlobalState.UsedMACs[sc.Cluster.MasterMAC] = true
+		deriveMagicDomain(sc.Cluster)
 		return sc.Config.Save()
 	}
 	// NAT mode: auto-allocate MAC and IP, then set MachineCIDR.
@@ -35,7 +36,20 @@ func (*Stage) Apply(_ context.Context, sc *interfaces.StageContext) error {
 		return err
 	}
 	sc.Cluster.MachineCIDR = sc.Cluster.NetworkSubnet + ".0/24"
+	deriveMagicDomain(sc.Cluster)
 	return sc.Config.Save()
+}
+
+// deriveMagicDomain sets Domain to "<masterIP>.<service>" once the IP is
+// known, when a wildcard DNS service is configured and no domain is set yet.
+// On resume the Domain is already persisted, so this is a no-op.
+func deriveMagicDomain(c *config.ClusterConfig) {
+	if c.MagicDNS == "" || c.Domain != "" {
+		return
+	}
+	if ip := c.PrimaryMasterIP(); ip != "" {
+		c.Domain = config.MagicDomain(ip, c.MagicDNS)
+	}
 }
 
 func (*Stage) Rollback(_ context.Context, sc *interfaces.StageContext) error {
