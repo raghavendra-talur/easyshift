@@ -220,24 +220,39 @@ func (v *VMManager) StoragePoolActive(_ context.Context, _ string) error {
 // NetworkProvisioner is a fake interfaces.NetworkProvisioner.
 type NetworkProvisioner struct {
 	mu      sync.Mutex
-	Created []interfaces.NetworkSpec
-	Deleted []string
+	Ensured []interfaces.NetworkSpec // EnsureNetwork calls
+	Added   []HostCall               // AddHost calls
+	Removed []HostCall               // RemoveHost calls
 	Err     error
 }
 
-// CreateNetwork records the spec.
-func (n *NetworkProvisioner) CreateNetwork(_ context.Context, spec interfaces.NetworkSpec) error {
+// HostCall records one AddHost/RemoveHost invocation.
+type HostCall struct {
+	Network string
+	Host    interfaces.DHCPHost
+}
+
+// EnsureNetwork records the spec.
+func (n *NetworkProvisioner) EnsureNetwork(_ context.Context, spec interfaces.NetworkSpec) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.Created = append(n.Created, spec)
+	n.Ensured = append(n.Ensured, spec)
 	return n.Err
 }
 
-// DeleteNetwork records the call.
-func (n *NetworkProvisioner) DeleteNetwork(_ context.Context, name string) error {
+// AddHost records the reservation.
+func (n *NetworkProvisioner) AddHost(_ context.Context, network string, host interfaces.DHCPHost) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.Deleted = append(n.Deleted, name)
+	n.Added = append(n.Added, HostCall{Network: network, Host: host})
+	return n.Err
+}
+
+// RemoveHost records the reservation removal.
+func (n *NetworkProvisioner) RemoveHost(_ context.Context, network string, host interfaces.DHCPHost) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.Removed = append(n.Removed, HostCall{Network: network, Host: host})
 	return n.Err
 }
 
@@ -667,10 +682,16 @@ func (b *Bundle) WriteTrace(w io.Writer) {
 		fmt.Fprintf(w, "\nISOs imported to libvirt pool: %v\n", b.VM.ImportedISOs)
 	}
 
-	if len(b.Net.Created) > 0 {
-		fmt.Fprintf(w, "\nLibvirt networks created (%d):\n", len(b.Net.Created))
-		for _, n := range b.Net.Created {
-			fmt.Fprintf(w, "  name=%s bridge=%s subnet=%s domain=%s\n", n.Name, n.Bridge, n.Subnet, n.Domain)
+	if len(b.Net.Ensured) > 0 {
+		fmt.Fprintf(w, "\nShared NAT network ensured (%d):\n", len(b.Net.Ensured))
+		for _, n := range b.Net.Ensured {
+			fmt.Fprintf(w, "  name=%s subnet=%s domain=%s\n", n.Name, n.Subnet, n.Domain)
+		}
+	}
+	if len(b.Net.Added) > 0 {
+		fmt.Fprintf(w, "\nDHCP reservations added (%d):\n", len(b.Net.Added))
+		for _, h := range b.Net.Added {
+			fmt.Fprintf(w, "  net=%s mac=%s ip=%s host=%s\n", h.Network, h.Host.MAC, h.Host.IP, h.Host.Hostname)
 		}
 	}
 

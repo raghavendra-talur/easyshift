@@ -195,11 +195,19 @@ func NewLibvirtNetworkProvisioner(cmd interfaces.CommandRunner) *LibvirtNetworkP
 	return &LibvirtNetworkProvisioner{cmd: cmd}
 }
 
-// CreateNetwork defines, starts, and autostart-enables a libvirt NAT network.
-func (p *LibvirtNetworkProvisioner) CreateNetwork(ctx context.Context, spec interfaces.NetworkSpec) error {
-	xml := buildNetworkXML(spec)
+// EnsureNetwork creates the shared NAT network if it doesn't already exist,
+// and ensures it's running. Idempotent: every NAT cluster calls it, but only
+// the first actually defines the network. Reservations are added separately
+// via AddHost (not baked into the definition) so adding/removing a cluster
+// doesn't churn the shared network.
+func (p *LibvirtNetworkProvisioner) EnsureNetwork(ctx context.Context, spec interfaces.NetworkSpec) error {
+	if _, err := p.cmd.Run(ctx, virshCmd, "net-info", spec.Name); err == nil {
+		// Already defined — make sure it's running (no-op if it already is).
+		_, _ = p.cmd.Run(ctx, virshCmd, "net-start", spec.Name)
+		return nil
+	}
 
-	xmlFile, err := writeTempFile(spec.Name+"-network-*.xml", []byte(xml))
+	xmlFile, err := writeTempFile(spec.Name+"-network-*.xml", []byte(buildNetworkXML(spec)))
 	if err != nil {
 		return fmt.Errorf("write network XML: %w", err)
 	}
@@ -208,9 +216,8 @@ func (p *LibvirtNetworkProvisioner) CreateNetwork(ctx context.Context, spec inte
 	if _, err := p.cmd.Run(ctx, virshCmd, "net-define", xmlFile); err != nil {
 		return fmt.Errorf("net-define %s: %w", spec.Name, err)
 	}
-	// From here the network is defined. If a later step fails, undefine it so
-	// the stage isn't left with a defined-but-inactive network that blocks the
-	// next attempt's net-define (the runner won't roll back a stage whose
+	// Now defined. If a later step fails, undefine so a retry isn't blocked by
+	// a defined-but-inactive network (the runner won't roll back a stage whose
 	// Apply returned an error, so we self-clean here).
 	if _, err := p.cmd.Run(ctx, virshCmd, "net-start", spec.Name); err != nil {
 		_, _ = p.cmd.Run(ctx, virshCmd, "net-undefine", spec.Name)
@@ -224,26 +231,39 @@ func (p *LibvirtNetworkProvisioner) CreateNetwork(ctx context.Context, spec inte
 	return nil
 }
 
-// buildNetworkXML assembles the libvirt NAT network definition. The <domain>
-// element is included only when spec.Domain is set (and is deliberately
-// omitted in magic-DNS mode so dnsmasq forwards the wildcard-service queries
-// upstream instead of answering them authoritatively). A <host> DHCP
-// reservation is added when spec.ReserveMAC is set, pinning the IP and
-// supplying the VM's hostname via DHCP option 12.
+// AddHost adds a DHCP reservation to the live network and its persistent
+// config. Idempotent: an already-present reservation is treated as success.
+func (p *LibvirtNetworkProvisioner) AddHost(ctx context.Context, network string, host interfaces.DHCPHost) error {
+	entry := fmt.Sprintf("<host mac='%s' name='%s' ip='%s'/>", host.MAC, host.Hostname, host.IP)
+	out, err := p.cmd.Run(ctx, virshCmd, "net-update", network, "add", "ip-dhcp-host", entry, "--live", "--config")
+	if err != nil && !strings.Contains(string(out), "already") && !strings.Contains(err.Error(), "already") {
+		return fmt.Errorf("net-update add host %s on %s: %w", host.MAC, network, err)
+	}
+	return nil
+}
+
+// RemoveHost removes a DHCP reservation. Idempotent: a missing reservation is
+// treated as success (best-effort cleanup on cluster delete).
+func (p *LibvirtNetworkProvisioner) RemoveHost(ctx context.Context, network string, host interfaces.DHCPHost) error {
+	entry := fmt.Sprintf("<host mac='%s' name='%s' ip='%s'/>", host.MAC, host.Hostname, host.IP)
+	out, err := p.cmd.Run(ctx, virshCmd, "net-update", network, "delete", "ip-dhcp-host", entry, "--live", "--config")
+	if err != nil && !strings.Contains(string(out), "no ") && !strings.Contains(err.Error(), "matching") {
+		return fmt.Errorf("net-update delete host %s on %s: %w", host.MAC, network, err)
+	}
+	return nil
+}
+
+// buildNetworkXML assembles the shared NAT network definition (no
+// reservations — those are added via net-update). The <domain> element is
+// included only when spec.Domain is set (omitted under magic DNS so dnsmasq
+// forwards the wildcard-service queries upstream). The bridge interface name
+// is omitted unless a short one is supplied, so libvirt auto-assigns virbrN
+// (a bridge ifname is capped at 15 chars; the network name is not).
 func buildNetworkXML(spec interfaces.NetworkSpec) string {
 	var domain string
 	if spec.Domain != "" {
 		domain = fmt.Sprintf("\n  <domain name='%s' localOnly='yes'/>", spec.Domain)
 	}
-	var reservation string
-	if spec.ReserveMAC != "" {
-		reservation = fmt.Sprintf("\n      <host mac='%s' name='%s' ip='%s'/>",
-			spec.ReserveMAC, spec.ReserveHostname, spec.ReserveIP)
-	}
-	// The bridge *interface* name is capped at 15 chars by the kernel
-	// (IFNAMSIZ), so we only set it when the caller supplies a short one;
-	// otherwise libvirt auto-assigns a virbrN. The network *name* (which is
-	// what VMs attach to) has no such limit.
 	bridge := "<bridge stp='on' delay='0'/>"
 	if spec.Bridge != "" {
 		bridge = fmt.Sprintf("<bridge name='%s' stp='on' delay='0'/>", spec.Bridge)
@@ -258,19 +278,10 @@ func buildNetworkXML(spec interfaces.NetworkSpec) string {
   %s%s
   <ip address='%s.1' netmask='255.255.255.0'>
     <dhcp>
-      <range start='%s.5' end='%s.254'/>%s
+      <range start='%s.5' end='%s.254'/>
     </dhcp>
   </ip>
-</network>`, spec.Name, bridge, domain, spec.Subnet, spec.Subnet, spec.Subnet, reservation)
-}
-
-// DeleteNetwork destroys and undefines a libvirt network.
-func (p *LibvirtNetworkProvisioner) DeleteNetwork(ctx context.Context, name string) error {
-	_, _ = p.cmd.Run(ctx, virshCmd, "net-destroy", name)
-	if _, err := p.cmd.Run(ctx, virshCmd, "net-undefine", name); err != nil {
-		return fmt.Errorf("net-undefine %s: %w", name, err)
-	}
-	return nil
+</network>`, spec.Name, bridge, domain, spec.Subnet, spec.Subnet, spec.Subnet)
 }
 
 func writeTempFile(pattern string, data []byte) (string, error) {

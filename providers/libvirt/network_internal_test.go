@@ -7,32 +7,33 @@ import (
 	"github.com/raghavendra-talur/easyshift/interfaces"
 )
 
-// TestBuildNetworkXML_MagicDNS covers the NAT magic-DNS shape: the bridge
+// TestBuildNetworkXML_Shared covers the shared NAT network shape: the bridge
 // interface name is omitted (so the kernel's 15-char IFNAMSIZ limit can't be
-// blown by a long cluster name — the regression that broke NAT), the DHCP
-// reservation is present, and the <domain> element is left out so dnsmasq
-// forwards the wildcard-service queries upstream.
-func TestBuildNetworkXML_MagicDNS(t *testing.T) {
+// blown — the regression that broke NAT), no <domain> is present (magic DNS
+// forwards wildcard-service queries upstream), and the DHCP range is set.
+// Reservations are NOT baked into the definition (they're added via
+// net-update), so no <host> should appear here.
+func TestBuildNetworkXML_Shared(t *testing.T) {
 	xml := buildNetworkXML(interfaces.NetworkSpec{
-		Name:            "easyshift-natdev", // 16 chars — invalid as a bridge ifname
-		Subnet:          "192.168.126",
-		ReserveMAC:      "52:54:00:2a:2c:e0",
-		ReserveIP:       "192.168.126.5",
-		ReserveHostname: "master-0",
+		Name:   "easyshift-nat",
+		Subnet: "192.168.126",
 	})
 	if strings.Contains(xml, "<bridge name=") {
-		t.Errorf("bridge interface name must be omitted (15-char limit); got:\n%s", xml)
-	}
-	if !strings.Contains(xml, `<host mac='52:54:00:2a:2c:e0' name='master-0' ip='192.168.126.5'/>`) {
-		t.Errorf("missing DHCP reservation:\n%s", xml)
+		t.Errorf("bridge interface name must be omitted (15-char limit):\n%s", xml)
 	}
 	if strings.Contains(xml, "<domain") {
-		t.Errorf("magic-DNS network must omit <domain>:\n%s", xml)
+		t.Errorf("shared network must omit <domain> under magic DNS:\n%s", xml)
+	}
+	if strings.Contains(xml, "<host ") {
+		t.Errorf("reservations are added via net-update, not baked in:\n%s", xml)
+	}
+	if !strings.Contains(xml, "<range start='192.168.126.5' end='192.168.126.254'/>") {
+		t.Errorf("expected DHCP range:\n%s", xml)
 	}
 }
 
-// TestBuildNetworkXML_WithDomain covers the non-magic NAT shape: an explicit
-// (short) bridge name and a local DNS domain are honored.
+// TestBuildNetworkXML_WithDomain covers a (non-magic) network with an explicit
+// short bridge name and a local DNS domain.
 func TestBuildNetworkXML_WithDomain(t *testing.T) {
 	xml := buildNetworkXML(interfaces.NetworkSpec{
 		Name:   "n",

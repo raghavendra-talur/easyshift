@@ -101,7 +101,7 @@ func (s *Stage) createMasterVM(ctx context.Context, sc *interfaces.StageContext,
 		DiskSizeGiB: c.MasterDiskGB,
 		StoragePool: c.StoragePool,
 		MAC:         mac,
-		NetworkArg:  networkArgFor(c, mac, sc.NetworkName()),
+		NetworkArg:  networkArgFor(c, mac),
 		BootISO:     c.BootISOVolPath,
 	})
 }
@@ -120,10 +120,11 @@ func macFor(c *config.ClusterConfig, role string) string {
 
 // networkArgFor builds the `virt-install --network` arg. model=virtio is
 // forced because virt-install's default (e1000) hangs the Tx queue under
-// load on modern kernels, stranding the VM mid-bootstrap.
-func networkArgFor(c *config.ClusterConfig, mac, natNetwork string) string {
+// load on modern kernels, stranding the VM mid-bootstrap. NAT-mode VMs all
+// attach to the single shared NAT network so clusters can reach each other.
+func networkArgFor(c *config.ClusterConfig, mac string) string {
 	if c.NetworkMode == config.NetworkModeBridge {
 		return fmt.Sprintf("bridge=%s,mac=%s,model=virtio", c.Bridge, mac)
 	}
-	return fmt.Sprintf("network=%s,mac=%s,model=virtio", natNetwork, mac)
+	return fmt.Sprintf("network=%s,mac=%s,model=virtio", config.SharedNATNetwork, mac)
 }

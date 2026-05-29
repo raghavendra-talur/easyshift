@@ -1,15 +1,18 @@
-// Package createlibvirtnetwork creates the libvirt NAT network for NAT-mode
-// clusters. In bridge mode every method is a no-op.
+// Package createlibvirtnetwork attaches a NAT-mode cluster to the single
+// shared NAT network: it ensures that network exists (a host-global resource)
+// and adds this cluster's master DHCP reservation. In bridge mode every
+// method is a no-op.
 package createlibvirtnetwork
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/raghavendra-talur/easyshift/config"
 	"github.com/raghavendra-talur/easyshift/interfaces"
 )
 
-// Stage provisions the cluster's libvirt NAT network.
+// Stage ensures the shared NAT network and the cluster's reservation.
 type Stage struct {
 	net interfaces.NetworkProvisioner
 	vm  interfaces.VMManager
@@ -36,25 +39,37 @@ func (s *Stage) Apply(ctx context.Context, sc *interfaces.StageContext) error {
 		return nil
 	}
 	c := sc.Cluster
-	spec := interfaces.NetworkSpec{
-		Name: sc.NetworkName(),
-		// Bridge left empty: libvirt auto-assigns a virbrN. The network name
-		// can be long, but a bridge *interface* name must fit in 15 chars.
-		Subnet: c.NetworkSubnet,
-		// DHCP reservation pins the master IP and supplies its hostname via
-		// option 12, so RHCOS's node-valid-hostname is satisfied with no SSH
-		// hostname injector.
-		ReserveMAC:      firstOrEmpty(c.MACAddresses),
-		ReserveIP:       c.PrimaryMasterIP(),
-		ReserveHostname: "master-0",
+	// Ensure the single shared NAT network exists. Idempotent — only the
+	// first NAT cluster actually creates it; the rest just confirm it's up.
+	// No <domain> (magic DNS forwards wildcard-service queries upstream).
+	if err := s.net.EnsureNetwork(ctx, interfaces.NetworkSpec{
+		Name:   config.SharedNATNetwork,
+		Subnet: config.BaseNetworkRange,
+	}); err != nil {
+		return err
 	}
-	// Under magic DNS the cluster names live on a public wildcard service
-	// (sslip.io/nip.io), so we must NOT make libvirt's dnsmasq authoritative
-	// for that domain — leave Domain unset so queries forward upstream.
-	if c.MagicDNS == "" {
-		spec.Domain = c.FQDN()
+	// Add THIS cluster's master reservation: pins the IP and hands the VM a
+	// unique hostname via DHCP option 12 (so node-valid-hostname is satisfied
+	// without an SSH injector). The hostname must be unique on the shared
+	// network, so it carries the cluster name.
+	return s.net.AddHost(ctx, config.SharedNATNetwork, masterReservation(c))
+}
+
+func (s *Stage) Rollback(ctx context.Context, sc *interfaces.StageContext) error {
+	if sc.Cluster.NetworkMode != config.NetworkModeNAT {
+		return nil
 	}
-	return s.net.CreateNetwork(ctx, spec)
+	// Remove only this cluster's reservation — the shared network is global
+	// and stays for the other clusters.
+	return s.net.RemoveHost(ctx, config.SharedNATNetwork, masterReservation(sc.Cluster))
+}
+
+func masterReservation(c *config.ClusterConfig) interfaces.DHCPHost {
+	return interfaces.DHCPHost{
+		MAC:      firstOrEmpty(c.MACAddresses),
+		IP:       c.PrimaryMasterIP(),
+		Hostname: fmt.Sprintf("master-0-%s", c.Name),
+	}
 }
 
 func firstOrEmpty(ss []string) string {
@@ -62,11 +77,4 @@ func firstOrEmpty(ss []string) string {
 		return ss[0]
 	}
 	return ""
-}
-
-func (s *Stage) Rollback(ctx context.Context, sc *interfaces.StageContext) error {
-	if sc.Cluster.NetworkMode != config.NetworkModeNAT {
-		return nil
-	}
-	return s.net.DeleteNetwork(ctx, sc.NetworkName())
 }

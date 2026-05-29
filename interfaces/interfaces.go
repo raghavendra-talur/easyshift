@@ -62,25 +62,34 @@ type VMManager interface {
 	StoragePoolActive(ctx context.Context, pool string) error
 }
 
-// NetworkSpec describes a libvirt NAT network for a cluster.
+// NetworkSpec describes the shared libvirt NAT network. Bridge is normally
+// empty so libvirt auto-assigns a virbrN (the bridge interface name is capped
+// at 15 chars); Domain is empty under magic DNS so dnsmasq forwards the
+// wildcard-service queries upstream.
 type NetworkSpec struct {
 	Name   string
 	Bridge string
-	Subnet string // e.g. "192.168.140"
-	Domain string // libvirt DNS domain
-	// ReserveMAC/ReserveIP/ReserveHostname, when all set, add a DHCP
-	// reservation that pins ReserveIP to ReserveMAC and hands the VM
-	// ReserveHostname via DHCP option 12 (so RHCOS's node-valid-hostname is
-	// satisfied without an SSH hostname injector).
-	ReserveMAC      string
-	ReserveIP       string
-	ReserveHostname string
+	Subnet string // e.g. "192.168.126"
+	Domain string // libvirt DNS domain (empty = none)
 }
 
-// NetworkProvisioner abstracts virtual network creation (libvirt NAT today).
+// DHCPHost is a per-master reservation on the shared NAT network: it pins IP
+// to MAC and hands the VM Hostname via DHCP option 12 (so RHCOS's
+// node-valid-hostname is satisfied without an SSH hostname injector).
+type DHCPHost struct {
+	MAC      string
+	IP       string
+	Hostname string
+}
+
+// NetworkProvisioner manages the shared NAT network. EnsureNetwork creates it
+// idempotently (it's a host-global resource shared by all NAT clusters);
+// AddHost/RemoveHost add and remove a single master's DHCP reservation
+// without disturbing the network or other clusters' reservations.
 type NetworkProvisioner interface {
-	CreateNetwork(ctx context.Context, spec NetworkSpec) error
-	DeleteNetwork(ctx context.Context, name string) error
+	EnsureNetwork(ctx context.Context, spec NetworkSpec) error
+	AddHost(ctx context.Context, network string, host DHCPHost) error
+	RemoveHost(ctx context.Context, network string, host DHCPHost) error
 }
 
 // InstallerSpec carries everything the Installer needs for one call. Binary

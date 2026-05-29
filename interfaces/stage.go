@@ -63,11 +63,6 @@ func (sc *StageContext) MasterISOVolName() string {
 	return "easyshift-" + sc.Cluster.Name + "-master.iso"
 }
 
-// NetworkName is the libvirt NAT network name for the cluster.
-func (sc *StageContext) NetworkName() string {
-	return "easyshift-" + sc.Cluster.Name
-}
-
 // KubeconfigPath is the admin kubeconfig produced by the installer.
 func (sc *StageContext) KubeconfigPath() string {
 	return filepath.Join(sc.ClusterDir(), "auth", "kubeconfig")

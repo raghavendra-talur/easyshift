@@ -16,12 +16,21 @@ const (
 	DefaultClustersMax  = 3
 	DefaultWorkersMax   = 3
 
-	// BaseNetworkRange is the /24 prefix for NAT-mode libvirt networks. It
+	// BaseNetworkRange is the /24 prefix for the shared NAT network. It
 	// deliberately avoids the common home-LAN ranges (192.168.0/1.x) so the
 	// virtual network doesn't collide with the host's real LAN.
 	BaseNetworkRange = "192.168.126"
 	NetworkStart     = 5
 	NetworkEnd       = 20
+
+	// SharedNATNetwork is the single libvirt network ALL NAT-mode clusters
+	// attach to. It is a host-global resource (not per-cluster): created once
+	// on the first NAT cluster and never torn down by deleting one cluster, so
+	// clusters share one L2 segment and can reach each other — important for
+	// disaster-recovery topologies (hub/spoke, replication, etc.). Per-cluster
+	// addressing is kept distinct via GlobalState.UsedIPs/UsedMACs plus a DHCP
+	// reservation per master added to this network.
+	SharedNATNetwork = "easyshift-nat"
 
 	// DefaultOCPVersion is a channel alias, not a pinned version. When set,
 	// ClusterManager.Create resolves it to the actual current version by

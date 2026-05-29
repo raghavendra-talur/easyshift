@@ -81,11 +81,17 @@ func TestCreateCluster_HappyPath(t *testing.T) {
 	if got, want := c.State, config.ClusterStateRunning; got != want {
 		t.Errorf("cluster state: got %q want %q", got, want)
 	}
-	if got, want := len(bundle.Net.Created), 1; got != want {
-		t.Fatalf("network creations: got %d want %d", got, want)
+	if got, want := len(bundle.Net.Ensured), 1; got != want {
+		t.Fatalf("EnsureNetwork calls: got %d want %d", got, want)
 	}
-	if got, want := bundle.Net.Created[0].Name, "easyshift-demo"; got != want {
-		t.Errorf("network name: got %q want %q", got, want)
+	if got, want := bundle.Net.Ensured[0].Name, config.SharedNATNetwork; got != want {
+		t.Errorf("shared network name: got %q want %q", got, want)
+	}
+	if got, want := len(bundle.Net.Added), 1; got != want {
+		t.Fatalf("DHCP reservations: got %d want %d", got, want)
+	}
+	if h := bundle.Net.Added[0]; h.Network != config.SharedNATNetwork || h.Host.Hostname != "master-0-demo" {
+		t.Errorf("reservation: got %+v want net=%s host=master-0-demo", h, config.SharedNATNetwork)
 	}
 	wantVMs := []string{"master-0-demo"}
 	if got := len(bundle.VM.Created); got != len(wantVMs) {
@@ -96,8 +102,8 @@ func TestCreateCluster_HappyPath(t *testing.T) {
 			t.Errorf("VM[%d] name: got %q want %q", i, got, want)
 		}
 	}
-	// SNO + NAT: the master's --network arg uses the libvirt network.
-	if got := bundle.VM.Created[0].NetworkArg; got != "network=easyshift-demo,mac="+bundle.VM.Created[0].MAC+",model=virtio" {
+	// SNO + NAT: the master attaches to the shared NAT network.
+	if got := bundle.VM.Created[0].NetworkArg; got != "network="+config.SharedNATNetwork+",mac="+bundle.VM.Created[0].MAC+",model=virtio" {
 		t.Errorf("NAT network arg: got %q", got)
 	}
 	// Master boots from the default-pool ISO uploaded by embed-ignition-iso.
@@ -193,14 +199,14 @@ func TestCreateCluster_ResumesAfterFailure(t *testing.T) {
 	// Heal the fake and re-run. Resume must pick up the existing cluster
 	// from cfg.Clusters and skip already-applied stages.
 	bundle.Net.Err = nil
-	netCallsBefore := len(bundle.Net.Created)
+	netCallsBefore := len(bundle.Net.Ensured)
 
 	if err := mgr.Create(context.Background(), newTestCluster("demo")); err != nil {
 		t.Fatalf("second Create: %v", err)
 	}
 
-	if got := len(bundle.Net.Created) - netCallsBefore; got != 1 {
-		t.Errorf("expected exactly 1 new network creation on resume, got %d", got)
+	if got := len(bundle.Net.Ensured) - netCallsBefore; got != 1 {
+		t.Errorf("expected exactly 1 new EnsureNetwork on resume, got %d", got)
 	}
 	if got, want := c.State, config.ClusterStateRunning; got != "" && got != want {
 		// `c` here is the local pre-fail object; the real cluster object lives in cfg.Clusters.
@@ -223,7 +229,7 @@ func TestCreateCluster_Idempotent(t *testing.T) {
 		t.Fatalf("first Create: %v", err)
 	}
 	vmCalls := len(bundle.VM.Created)
-	netCalls := len(bundle.Net.Created)
+	netCalls := len(bundle.Net.Ensured)
 
 	err := mgr.Create(context.Background(), newTestCluster("demo"))
 	if err == nil {
@@ -232,13 +238,14 @@ func TestCreateCluster_Idempotent(t *testing.T) {
 	if got := len(bundle.VM.Created); got != vmCalls {
 		t.Errorf("VM.Created should not change on re-create, got delta %d", got-vmCalls)
 	}
-	if got := len(bundle.Net.Created); got != netCalls {
-		t.Errorf("Net.Created should not change on re-create, got delta %d", got-netCalls)
+	if got := len(bundle.Net.Ensured); got != netCalls {
+		t.Errorf("Net.Ensured should not change on re-create, got delta %d", got-netCalls)
 	}
 }
 
 // TestDeleteCluster_RollsBackAppliedStages confirms Delete walks the stage
-// list in reverse and invokes VM.Delete + Net.DeleteNetwork.
+// list in reverse and invokes VM.Delete + Net.RemoveHost (the shared network
+// itself is left intact).
 func TestDeleteCluster_RollsBackAppliedStages(t *testing.T) {
 	cfg, deps, bundle := newTestEnv(t)
 	mgr := app.NewClusterManager(cfg, deps)
@@ -255,8 +262,11 @@ func TestDeleteCluster_RollsBackAppliedStages(t *testing.T) {
 	if got, want := len(bundle.VM.Deleted), 1; got != want {
 		t.Errorf("VM.Deleted: got %d want %d", got, want)
 	}
-	if got, want := len(bundle.Net.Deleted), 1; got != want {
-		t.Errorf("Net.Deleted: got %d want %d", got, want)
+	if got, want := len(bundle.Net.Removed), 1; got != want {
+		t.Errorf("Net.Removed (DHCP reservation) : got %d want %d", got, want)
+	}
+	if got := len(bundle.Net.Ensured); got == 0 {
+		t.Error("expected the shared network to have been ensured during create")
 	}
 	if got, want := len(cfg.Clusters), 0; got != want {
 		t.Errorf("cfg.Clusters len after delete: got %d want %d", got, want)
@@ -535,15 +545,72 @@ func TestCreateCluster_NAT_MagicDNS(t *testing.T) {
 	if c.Domain != wantDomain {
 		t.Errorf("derived domain: got %q want %q", c.Domain, wantDomain)
 	}
-	if got := len(bundle.Net.Created); got != 1 {
-		t.Fatalf("network creations: got %d want 1", got)
+	// One shared NAT network ensured, with no <domain> (magic DNS forwards
+	// upstream).
+	if got := len(bundle.Net.Ensured); got != 1 {
+		t.Fatalf("EnsureNetwork calls: got %d want 1", got)
 	}
-	net := bundle.Net.Created[0]
-	if net.ReserveIP != "192.168.126.5" || net.ReserveHostname != "master-0" || net.ReserveMAC == "" {
-		t.Errorf("DHCP reservation: got %+v want IP=192.168.126.5 host=master-0 mac!=\"\"", net)
+	if ens := bundle.Net.Ensured[0]; ens.Name != config.SharedNATNetwork || ens.Domain != "" {
+		t.Errorf("shared net: got %+v want name=%s domain=\"\"", ens, config.SharedNATNetwork)
 	}
-	if net.Domain != "" {
-		t.Errorf("magic-DNS network must omit <domain> (got %q) so sslip.io forwards upstream", net.Domain)
+	// One DHCP reservation pinning the derived IP with a cluster-unique hostname.
+	if got := len(bundle.Net.Added); got != 1 {
+		t.Fatalf("AddHost calls: got %d want 1", got)
+	}
+	h := bundle.Net.Added[0].Host
+	if h.IP != "192.168.126.5" || h.Hostname != "master-0-natmagic" || h.MAC == "" {
+		t.Errorf("reservation: got %+v want IP=192.168.126.5 host=master-0-natmagic mac!=\"\"", h)
+	}
+}
+
+// TestCreateCluster_NAT_SharedNetwork confirms two NAT clusters attach to the
+// single shared network (each EnsureNetwork targets the same name), each adds
+// its own distinct DHCP reservation, and deleting one removes only that
+// cluster's reservation — the shared network and the other cluster's
+// reservation are left intact. This is the property DR topologies rely on
+// (clusters on one L2 segment can talk to each other).
+func TestCreateCluster_NAT_SharedNetwork(t *testing.T) {
+	cfg, deps, bundle := newTestEnv(t)
+	mgr := app.NewClusterManager(cfg, deps)
+
+	if err := mgr.Create(context.Background(), newNATCluster("hub")); err != nil {
+		t.Fatalf("create hub: %v", err)
+	}
+	if err := mgr.Create(context.Background(), newNATCluster("spoke")); err != nil {
+		t.Fatalf("create spoke: %v", err)
+	}
+
+	// Both clusters ensured the SAME shared network.
+	for i, e := range bundle.Net.Ensured {
+		if e.Name != config.SharedNATNetwork {
+			t.Errorf("Ensured[%d] name: got %q want %q", i, e.Name, config.SharedNATNetwork)
+		}
+	}
+	// Two distinct reservations on the shared network (.5 and .6).
+	if got := len(bundle.Net.Added); got != 2 {
+		t.Fatalf("AddHost calls: got %d want 2 (%+v)", got, bundle.Net.Added)
+	}
+	gotIPs := map[string]string{} // ip -> hostname
+	for _, a := range bundle.Net.Added {
+		if a.Network != config.SharedNATNetwork {
+			t.Errorf("reservation on wrong network: %+v", a)
+		}
+		gotIPs[a.Host.IP] = a.Host.Hostname
+	}
+	if gotIPs["192.168.126.5"] != "master-0-hub" || gotIPs["192.168.126.6"] != "master-0-spoke" {
+		t.Errorf("expected distinct reservations .5->hub .6->spoke, got %v", gotIPs)
+	}
+
+	// Delete the hub: only its reservation is removed; the shared network and
+	// spoke's reservation are untouched (no whole-network teardown).
+	if err := mgr.Delete(context.Background(), "hub"); err != nil {
+		t.Fatalf("delete hub: %v", err)
+	}
+	if got := len(bundle.Net.Removed); got != 1 {
+		t.Fatalf("RemoveHost calls: got %d want 1 (%+v)", got, bundle.Net.Removed)
+	}
+	if r := bundle.Net.Removed[0]; r.Host.Hostname != "master-0-hub" {
+		t.Errorf("removed wrong reservation: got %+v want host=master-0-hub", r)
 	}
 }
 
@@ -632,7 +699,7 @@ func TestCreateCluster_PreflightFailsWhenLibvirtUnreachable(t *testing.T) {
 	if got := len(bundle.VM.Created); got != 0 {
 		t.Errorf("preflight failure must not create VMs, got %d", got)
 	}
-	if got := len(bundle.Net.Created); got != 0 {
+	if got := len(bundle.Net.Ensured); got != 0 {
 		t.Errorf("preflight failure must not create networks, got %d", got)
 	}
 	if got := len(cfg.Clusters); got != 0 {
@@ -937,7 +1004,7 @@ func TestCreateCluster_BridgeMode_SkipsLibvirtNetwork(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	if got := len(bundle.Net.Created); got != 0 {
+	if got := len(bundle.Net.Ensured); got != 0 {
 		t.Errorf("bridge mode must NOT create libvirt network, got %d creations", got)
 	}
 	if got, want := len(bundle.VM.Created), 1; got != want {

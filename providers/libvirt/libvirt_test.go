@@ -56,12 +56,16 @@ func TestLibvirtVMManager_CreateArgs(t *testing.T) {
 	}
 }
 
-// TestCreateNetwork_UndefinesOnFailedStart confirms that when net-start fails
-// after net-define succeeded, CreateNetwork undefines the network so a leftover
-// defined-but-inactive network can't block the next attempt's net-define.
-func TestCreateNetwork_UndefinesOnFailedStart(t *testing.T) {
+// TestEnsureNetwork_UndefinesOnFailedStart confirms that when the network
+// doesn't yet exist and net-start fails after net-define, EnsureNetwork
+// undefines it so a leftover defined-but-inactive network can't block the
+// next attempt's net-define.
+func TestEnsureNetwork_UndefinesOnFailedStart(t *testing.T) {
 	cmd := &fakes.CommandRunner{
 		RunFunc: func(_ string, args []string) ([]byte, error) {
+			if contains(args, "net-info") {
+				return nil, errors.New("Network not found") // doesn't exist yet
+			}
 			if contains(args, "net-start") {
 				return nil, errors.New("boom")
 			}
@@ -70,8 +74,8 @@ func TestCreateNetwork_UndefinesOnFailedStart(t *testing.T) {
 	}
 	p := libvirt.NewLibvirtNetworkProvisioner(cmd)
 
-	err := p.CreateNetwork(context.Background(), interfaces.NetworkSpec{
-		Name:   "easyshift-natdev",
+	err := p.EnsureNetwork(context.Background(), interfaces.NetworkSpec{
+		Name:   "easyshift-nat",
 		Subnet: "192.168.126",
 	})
 	if err == nil || !strings.Contains(err.Error(), "net-start") {
@@ -85,6 +89,25 @@ func TestCreateNetwork_UndefinesOnFailedStart(t *testing.T) {
 	}
 	if !sawUndefine {
 		t.Error("expected net-undefine cleanup after a failed net-start")
+	}
+}
+
+// TestEnsureNetwork_IdempotentWhenExists confirms that if the network already
+// exists, EnsureNetwork does not re-define it (just ensures it's started).
+func TestEnsureNetwork_IdempotentWhenExists(t *testing.T) {
+	cmd := &fakes.CommandRunner{} // all commands succeed -> net-info "exists"
+	p := libvirt.NewLibvirtNetworkProvisioner(cmd)
+
+	if err := p.EnsureNetwork(context.Background(), interfaces.NetworkSpec{
+		Name:   "easyshift-nat",
+		Subnet: "192.168.126",
+	}); err != nil {
+		t.Fatalf("EnsureNetwork: %v", err)
+	}
+	for _, call := range cmd.Calls {
+		if contains(call.Args, "net-define") {
+			t.Error("net-define must not be called when the network already exists")
+		}
 	}
 }
 
