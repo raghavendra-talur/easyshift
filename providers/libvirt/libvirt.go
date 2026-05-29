@@ -35,11 +35,23 @@ func NewLibvirtVMManager(cmd interfaces.CommandRunner) *LibvirtVMManager {
 	return &LibvirtVMManager{cmd: cmd}
 }
 
+// virsh runs a virsh subcommand against the system libvirt instance. Every
+// operation must name qemu:///system explicitly: bare virsh resolves the
+// connection from the ambient default URI, which for a non-root user with no
+// LIBVIRT_DEFAULT_URI is qemu:///session — and that unprivileged daemon can't
+// create the NAT bridge ("Operation not permitted"). The CheckAccess preflight
+// already targets system, so without this the preflight would pass while the
+// real work silently went to the session daemon and failed.
+func (m *LibvirtVMManager) virsh(ctx context.Context, args ...string) ([]byte, error) {
+	return m.cmd.Run(ctx, virshCmd, append([]string{"-c", LibvirtSystemURI}, args...)...)
+}
+
 // Create defines a new VM via `virt-install`. If spec.BootISO is set the VM
 // boots from that ISO (SNO bootstrap-in-place); otherwise it PXE-boots and
 // uses spec.KernelArgs.
 func (m *LibvirtVMManager) Create(ctx context.Context, spec interfaces.VMSpec) error {
 	args := []string{
+		"--connect", LibvirtSystemURI,
 		"--name", spec.Name,
 		"--memory", strconv.Itoa(spec.MemoryMiB),
 		"--vcpus", strconv.Itoa(spec.VCPUs),
@@ -65,7 +77,7 @@ func (m *LibvirtVMManager) Create(ctx context.Context, spec interfaces.VMSpec) e
 
 // Start boots a VM and waits up to 60s for it to enter the running state.
 func (m *LibvirtVMManager) Start(ctx context.Context, name string) error {
-	if _, err := m.cmd.Run(ctx, virshCmd, "start", name); err != nil {
+	if _, err := m.virsh(ctx, "start", name); err != nil {
 		return fmt.Errorf("virsh start %s: %w", name, err)
 	}
 	for i := 0; i < 30; i++ {
@@ -84,7 +96,7 @@ func (m *LibvirtVMManager) Start(ctx context.Context, name string) error {
 
 // Stop gracefully shuts down a VM, falling back to forced destroy after 60s.
 func (m *LibvirtVMManager) Stop(ctx context.Context, name string) error {
-	if _, err := m.cmd.Run(ctx, virshCmd, "shutdown", name); err != nil {
+	if _, err := m.virsh(ctx, "shutdown", name); err != nil {
 		return fmt.Errorf("virsh shutdown %s: %w", name, err)
 	}
 	for i := 0; i < 30; i++ {
@@ -98,7 +110,7 @@ func (m *LibvirtVMManager) Stop(ctx context.Context, name string) error {
 		case <-time.After(2 * time.Second):
 		}
 	}
-	if _, err := m.cmd.Run(ctx, virshCmd, "destroy", name); err != nil {
+	if _, err := m.virsh(ctx, "destroy", name); err != nil {
 		return fmt.Errorf("virsh destroy %s: %w", name, err)
 	}
 	return nil
@@ -112,7 +124,7 @@ func (m *LibvirtVMManager) Delete(ctx context.Context, name string) error {
 			return err
 		}
 	}
-	if _, err := m.cmd.Run(ctx, virshCmd, "undefine", name, "--remove-all-storage"); err != nil {
+	if _, err := m.virsh(ctx, "undefine", name, "--remove-all-storage"); err != nil {
 		return fmt.Errorf("virsh undefine %s: %w", name, err)
 	}
 	return nil
@@ -120,7 +132,7 @@ func (m *LibvirtVMManager) Delete(ctx context.Context, name string) error {
 
 // IsRunning returns true if `virsh domstate` reports the VM as running.
 func (m *LibvirtVMManager) IsRunning(ctx context.Context, name string) (bool, error) {
-	out, err := m.cmd.Run(ctx, virshCmd, "domstate", name)
+	out, err := m.virsh(ctx, "domstate", name)
 	if err != nil {
 		return false, err
 	}
@@ -138,16 +150,16 @@ func (m *LibvirtVMManager) ImportISO(ctx context.Context, pool, volName, localPa
 		return "", fmt.Errorf("stat iso %s: %w", localPath, err)
 	}
 	// Drop any stale volume from a previous attempt so vol-create-as is idempotent.
-	_, _ = m.cmd.Run(ctx, virshCmd, "vol-delete", "--pool", pool, volName)
+	_, _ = m.virsh(ctx, "vol-delete", "--pool", pool, volName)
 
-	if _, err := m.cmd.Run(ctx, virshCmd, "vol-create-as", pool, volName,
+	if _, err := m.virsh(ctx, "vol-create-as", pool, volName,
 		strconv.FormatInt(fi.Size(), 10), "--format", "raw"); err != nil {
 		return "", fmt.Errorf("vol-create-as %s: %w", volName, err)
 	}
-	if _, err := m.cmd.Run(ctx, virshCmd, "vol-upload", "--pool", pool, volName, localPath); err != nil {
+	if _, err := m.virsh(ctx, "vol-upload", "--pool", pool, volName, localPath); err != nil {
 		return "", fmt.Errorf("vol-upload %s: %w", volName, err)
 	}
-	out, err := m.cmd.Run(ctx, virshCmd, "vol-path", "--pool", pool, volName)
+	out, err := m.virsh(ctx, "vol-path", "--pool", pool, volName)
 	if err != nil {
 		return "", fmt.Errorf("vol-path %s: %w", volName, err)
 	}
@@ -157,7 +169,7 @@ func (m *LibvirtVMManager) ImportISO(ctx context.Context, pool, volName, localPa
 // RemoveISO deletes a volume created by ImportISO. Missing volumes are not
 // an error (best-effort cleanup during rollback).
 func (m *LibvirtVMManager) RemoveISO(ctx context.Context, pool, volName string) error {
-	_, _ = m.cmd.Run(ctx, virshCmd, "vol-delete", "--pool", pool, volName)
+	_, _ = m.virsh(ctx, "vol-delete", "--pool", pool, volName)
 	return nil
 }
 
@@ -165,7 +177,7 @@ func (m *LibvirtVMManager) RemoveISO(ctx context.Context, pool, volName string) 
 // deploy-time problems: libvirtd not running, user not in the libvirt group,
 // or a polkit denial.
 func (m *LibvirtVMManager) CheckAccess(ctx context.Context) error {
-	if _, err := m.cmd.Run(ctx, virshCmd, "-c", LibvirtSystemURI, "list", "--name"); err != nil {
+	if _, err := m.virsh(ctx, "list", "--name"); err != nil {
 		return fmt.Errorf("libvirt at %s is not reachable: %w\n  hint: ensure libvirtd/virtqemud is running and your user is in the 'libvirt' group", LibvirtSystemURI, err)
 	}
 	return nil
@@ -174,7 +186,7 @@ func (m *LibvirtVMManager) CheckAccess(ctx context.Context) error {
 // StoragePoolActive verifies the named libvirt pool exists and is running,
 // since both the master disk and the boot ISO are created there.
 func (m *LibvirtVMManager) StoragePoolActive(ctx context.Context, pool string) error {
-	out, err := m.cmd.Run(ctx, virshCmd, "-c", LibvirtSystemURI, "pool-info", "--pool", pool)
+	out, err := m.virsh(ctx, "pool-info", "--pool", pool)
 	if err != nil {
 		return fmt.Errorf("libvirt storage pool %q not found: %w\n  hint: pass --storage-pool <name> to use an existing pool (see `virsh pool-list --all`), or create it: virsh pool-define-as %s dir --target /var/lib/libvirt/images && virsh pool-autostart %s && virsh pool-start %s",
 			pool, err, pool, pool, pool)
@@ -195,15 +207,22 @@ func NewLibvirtNetworkProvisioner(cmd interfaces.CommandRunner) *LibvirtNetworkP
 	return &LibvirtNetworkProvisioner{cmd: cmd}
 }
 
+// virsh runs a virsh subcommand against the system libvirt instance. See the
+// LibvirtVMManager.virsh note: NAT bridge creation fails with "Operation not
+// permitted" if these calls fall back to the unprivileged qemu:///session.
+func (p *LibvirtNetworkProvisioner) virsh(ctx context.Context, args ...string) ([]byte, error) {
+	return p.cmd.Run(ctx, virshCmd, append([]string{"-c", LibvirtSystemURI}, args...)...)
+}
+
 // EnsureNetwork creates the shared NAT network if it doesn't already exist,
 // and ensures it's running. Idempotent: every NAT cluster calls it, but only
 // the first actually defines the network. Reservations are added separately
 // via AddHost (not baked into the definition) so adding/removing a cluster
 // doesn't churn the shared network.
 func (p *LibvirtNetworkProvisioner) EnsureNetwork(ctx context.Context, spec interfaces.NetworkSpec) error {
-	if _, err := p.cmd.Run(ctx, virshCmd, "net-info", spec.Name); err == nil {
+	if _, err := p.virsh(ctx, "net-info", spec.Name); err == nil {
 		// Already defined — make sure it's running (no-op if it already is).
-		_, _ = p.cmd.Run(ctx, virshCmd, "net-start", spec.Name)
+		_, _ = p.virsh(ctx, "net-start", spec.Name)
 		return nil
 	}
 
@@ -213,19 +232,19 @@ func (p *LibvirtNetworkProvisioner) EnsureNetwork(ctx context.Context, spec inte
 	}
 	defer os.Remove(xmlFile)
 
-	if _, err := p.cmd.Run(ctx, virshCmd, "net-define", xmlFile); err != nil {
+	if _, err := p.virsh(ctx, "net-define", xmlFile); err != nil {
 		return fmt.Errorf("net-define %s: %w", spec.Name, err)
 	}
 	// Now defined. If a later step fails, undefine so a retry isn't blocked by
 	// a defined-but-inactive network (the runner won't roll back a stage whose
 	// Apply returned an error, so we self-clean here).
-	if _, err := p.cmd.Run(ctx, virshCmd, "net-start", spec.Name); err != nil {
-		_, _ = p.cmd.Run(ctx, virshCmd, "net-undefine", spec.Name)
+	if _, err := p.virsh(ctx, "net-start", spec.Name); err != nil {
+		_, _ = p.virsh(ctx, "net-undefine", spec.Name)
 		return fmt.Errorf("net-start %s: %w", spec.Name, err)
 	}
-	if _, err := p.cmd.Run(ctx, virshCmd, "net-autostart", spec.Name); err != nil {
-		_, _ = p.cmd.Run(ctx, virshCmd, "net-destroy", spec.Name)
-		_, _ = p.cmd.Run(ctx, virshCmd, "net-undefine", spec.Name)
+	if _, err := p.virsh(ctx, "net-autostart", spec.Name); err != nil {
+		_, _ = p.virsh(ctx, "net-destroy", spec.Name)
+		_, _ = p.virsh(ctx, "net-undefine", spec.Name)
 		return fmt.Errorf("net-autostart %s: %w", spec.Name, err)
 	}
 	return nil
@@ -235,7 +254,7 @@ func (p *LibvirtNetworkProvisioner) EnsureNetwork(ctx context.Context, spec inte
 // config. Idempotent: an already-present reservation is treated as success.
 func (p *LibvirtNetworkProvisioner) AddHost(ctx context.Context, network string, host interfaces.DHCPHost) error {
 	entry := fmt.Sprintf("<host mac='%s' name='%s' ip='%s'/>", host.MAC, host.Hostname, host.IP)
-	out, err := p.cmd.Run(ctx, virshCmd, "net-update", network, "add", "ip-dhcp-host", entry, "--live", "--config")
+	out, err := p.virsh(ctx, "net-update", network, "add", "ip-dhcp-host", entry, "--live", "--config")
 	if err != nil && !strings.Contains(string(out), "already") && !strings.Contains(err.Error(), "already") {
 		return fmt.Errorf("net-update add host %s on %s: %w", host.MAC, network, err)
 	}
@@ -246,7 +265,7 @@ func (p *LibvirtNetworkProvisioner) AddHost(ctx context.Context, network string,
 // treated as success (best-effort cleanup on cluster delete).
 func (p *LibvirtNetworkProvisioner) RemoveHost(ctx context.Context, network string, host interfaces.DHCPHost) error {
 	entry := fmt.Sprintf("<host mac='%s' name='%s' ip='%s'/>", host.MAC, host.Hostname, host.IP)
-	out, err := p.cmd.Run(ctx, virshCmd, "net-update", network, "delete", "ip-dhcp-host", entry, "--live", "--config")
+	out, err := p.virsh(ctx, "net-update", network, "delete", "ip-dhcp-host", entry, "--live", "--config")
 	if err != nil && !strings.Contains(string(out), "no ") && !strings.Contains(err.Error(), "matching") {
 		return fmt.Errorf("net-update delete host %s on %s: %w", host.MAC, network, err)
 	}

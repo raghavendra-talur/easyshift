@@ -40,6 +40,12 @@ func TestLibvirtVMManager_CreateArgs(t *testing.T) {
 	}
 	joined := strings.Join(call.Args, " ")
 
+	// --connect qemu:///system must be present: bare virt-install defaults to
+	// qemu:///session for non-root users, where NAT bridge creation fails with
+	// "Operation not permitted".
+	if !hasFlagWithValue(call.Args, "--connect", "qemu:///system") {
+		t.Errorf("virt-install args missing --connect qemu:///system: %s", joined)
+	}
 	// --osinfo must be present (regression: modern virt-install requires it).
 	if !hasFlagValue(call.Args, "--osinfo") {
 		t.Errorf("virt-install args missing --osinfo: %s", joined)
@@ -108,12 +114,26 @@ func TestEnsureNetwork_IdempotentWhenExists(t *testing.T) {
 		if contains(call.Args, "net-define") {
 			t.Error("net-define must not be called when the network already exists")
 		}
+		// Every virsh call must target qemu:///system explicitly (otherwise a
+		// non-root user falls back to the unprivileged session daemon).
+		if !hasFlagWithValue(call.Args, "-c", "qemu:///system") {
+			t.Errorf("virsh call missing -c qemu:///system: %v", call.Args)
+		}
 	}
 }
 
 func hasFlagValue(args []string, flag string) bool {
 	for i, a := range args {
 		if a == flag && i+1 < len(args) && args[i+1] != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasFlagWithValue(args []string, flag, value string) bool {
+	for i, a := range args {
+		if a == flag && i+1 < len(args) && args[i+1] == value {
 			return true
 		}
 	}
