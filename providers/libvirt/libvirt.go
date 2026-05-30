@@ -59,6 +59,12 @@ func (m *LibvirtVMManager) Create(ctx context.Context, spec interfaces.VMSpec) e
 		"--osinfo", defaultOSInfo,
 		"--disk", fmt.Sprintf("pool=%s,size=%d,bus=virtio", spec.StoragePool, spec.DiskSizeGiB),
 		"--network", spec.NetworkArg,
+		// SNO bootstrap-in-place writes RHCOS to disk and reboots to pivot off
+		// the live ISO. Order hd first so the post-install reboot lands on the
+		// installed OS; the empty disk falls through to the ISO on first boot,
+		// matching the OCP-prescribed boot order ("default to booting from the
+		// target installation disk" with the ISO booted once for discovery).
+		"--boot", "hd,cdrom",
 		"--noautoconsole",
 	}
 	if spec.BootISO != "" {

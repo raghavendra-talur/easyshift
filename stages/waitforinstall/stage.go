@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/sirupsen/logrus"
 
@@ -21,6 +22,14 @@ import (
 // mco-firstboot ostree pivot routinely exceeds the first window; the
 // installer itself tells you to re-run, so we automate it.
 const waitForInstallRetries = 3
+
+// vmWatchdogInterval is how often the watchdog polls the master VM state
+// during the wait. SNO bootstrap-in-place reboots the VM (live ISO -> installed
+// disk) and the MCO firstboot can trigger more reboots; libvirt is known not to
+// reliably honor the guest reboot for this flow, leaving the domain in shut-off
+// state. The watchdog restarts it so the install resumes, matching the
+// community-prescribed pattern for KVM SNO.
+const vmWatchdogInterval = 15 * time.Second
 
 // Stage waits for the cluster to finish installing.
 type Stage struct {
@@ -41,6 +50,8 @@ func (s *Stage) Apply(ctx context.Context, sc *interfaces.StageContext) error {
 	helperCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	vmName := fmt.Sprintf("master-0-%s", sc.Cluster.Name)
+
 	csrDone := make(chan struct{})
 	go func() {
 		defer close(csrDone)
@@ -60,19 +71,49 @@ func (s *Stage) Apply(ctx context.Context, sc *interfaces.StageContext) error {
 		close(hostnameDone)
 	}
 
+	watchdogDone := make(chan struct{})
+	go func() {
+		defer close(watchdogDone)
+		s.watchdog(helperCtx, vmName)
+	}()
+
 	spec, closeFn := s.installerWaitSpec(sc)
 	defer closeFn()
 	err := s.waitWithRetry(ctx, sc, spec)
 	cancel()
 	<-csrDone
 	<-hostnameDone
+	<-watchdogDone
 	return err
 }
 
 func (*Stage) Rollback(_ context.Context, _ *interfaces.StageContext) error { return nil }
 
-func (s *Stage) waitWithRetry(ctx context.Context, sc *interfaces.StageContext, spec interfaces.InstallerSpec) error {
-	vmName := fmt.Sprintf("master-0-%s", sc.Cluster.Name)
+// watchdog polls the master VM and restarts it whenever libvirt drops it into
+// shut-off, which happens because the SNO bootstrap-in-place reboot (live ISO
+// -> installed disk, then MCO firstboot) doesn't reliably trigger libvirt's
+// on_reboot handling. Runs until ctx is canceled (i.e. the wait completes).
+func (s *Stage) watchdog(ctx context.Context, vmName string) {
+	ticker := time.NewTicker(vmWatchdogInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			running, err := s.vm.IsRunning(ctx, vmName)
+			if err != nil || running {
+				continue
+			}
+			logrus.Warnf("VM %s is shut off during install; restarting (libvirt did not honor the guest reboot)", vmName)
+			if serr := s.vm.Start(ctx, vmName); serr != nil {
+				logrus.Warnf("restart VM %s: %v", vmName, serr)
+			}
+		}
+	}
+}
+
+func (s *Stage) waitWithRetry(ctx context.Context, _ *interfaces.StageContext, spec interfaces.InstallerSpec) error {
 	var err error
 	for attempt := 1; attempt <= waitForInstallRetries; attempt++ {
 		err = s.installer.WaitForInstallComplete(ctx, spec)
@@ -90,14 +131,6 @@ func (s *Stage) waitWithRetry(ctx context.Context, sc *interfaces.StageContext, 
 		}
 		logrus.Warnf("wait-for install-complete timed out (attempt %d/%d), retrying: %v",
 			attempt, waitForInstallRetries, err)
-		// If the VM shut itself off, the next retry would burn its budget on
-		// a dead API. Restart it first.
-		if running, ierr := s.vm.IsRunning(ctx, vmName); ierr == nil && !running {
-			logrus.Warnf("VM %s is shut off between retries; restarting", vmName)
-			if serr := s.vm.Start(ctx, vmName); serr != nil {
-				logrus.Warnf("restart VM %s: %v", vmName, serr)
-			}
-		}
 	}
 	return fmt.Errorf("wait-for install-complete: gave up after %d timeouts: %w",
 		waitForInstallRetries, err)

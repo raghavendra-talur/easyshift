@@ -46,6 +46,13 @@ func TestLibvirtVMManager_CreateArgs(t *testing.T) {
 	if !hasFlagWithValue(call.Args, "--connect", "qemu:///system") {
 		t.Errorf("virt-install args missing --connect qemu:///system: %s", joined)
 	}
+	// --boot hd,cdrom is the OCP-prescribed boot order for SNO bootstrap-in-
+	// place: the empty disk falls through to the ISO on first boot, and the
+	// post-install reboot pivots onto the installed OS rather than re-running
+	// the live environment. Without this the VM re-boots the ISO in a loop.
+	if !hasFlagWithValue(call.Args, "--boot", "hd,cdrom") {
+		t.Errorf("virt-install args missing --boot hd,cdrom: %s", joined)
+	}
 	// --osinfo must be present (regression: modern virt-install requires it).
 	if !hasFlagValue(call.Args, "--osinfo") {
 		t.Errorf("virt-install args missing --osinfo: %s", joined)
