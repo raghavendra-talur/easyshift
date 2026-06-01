@@ -81,6 +81,21 @@ ACME account keys are persisted per provider and per environment (staging vs
 production) under `~/.config/easyshift/acme/`, so switching between them doesn't
 clobber the other's account.
 
+### Your kubeconfig keeps working
+
+Once `api.<fqdn>` serves the Let's Encrypt cert, the install-generated admin
+kubeconfig — which pins the cluster's *internal* CA — would otherwise fail with
+`certificate signed by unknown authority`. The `apply-tls-certs` stage handles
+this for you: after the cert is applied it rewrites
+`clusters/<name>/auth/kubeconfig` to drop the embedded CA, so `oc` validates the
+public cert through your system trust store with no extra flags. The original is
+preserved next to it as `kubeconfig.internal-ca` for break-glass use or for
+talking to the internal `api-int.<fqdn>` endpoint.
+
+> The rewrite happens immediately, but the API may take a few minutes to finish
+> rolling out the new serving cert. Until it does, `oc` can briefly report a
+> cert error — give the `kube-apiserver` operator time to settle.
+
 ## Verifying
 
 After install:

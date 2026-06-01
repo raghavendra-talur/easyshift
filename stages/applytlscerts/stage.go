@@ -4,10 +4,14 @@
 package applytlscerts
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/sirupsen/logrus"
 
 	"github.com/raghavendra-talur/easyshift/config"
 	"github.com/raghavendra-talur/easyshift/interfaces"
@@ -101,6 +105,44 @@ func (s *Stage) Apply(ctx context.Context, sc *interfaces.StageContext) error {
 		"--type=merge", "-p", ingressPatch); err != nil {
 		return fmt.Errorf("patch ingresscontroller/default: %w", err)
 	}
+
+	// Now that api.<fqdn> serves a publicly-trusted Let's Encrypt cert, make the
+	// admin kubeconfig validate it out of the box. Best-effort: the cluster is
+	// already up, so a hiccup here shouldn't fail the install — just warn.
+	if err := s.makeKubeconfigPublic(ctx, oc, kubeconfig, sc.Cluster.Name); err != nil {
+		logrus.Warnf("apply-tls-certs: could not make %s trust the public cert automatically "+
+			"(use --insecure-skip-tls-verify, or `oc config unset clusters.%s.certificate-authority-data`): %v",
+			kubeconfig, sc.Cluster.Name, err)
+	}
+	return nil
+}
+
+// makeKubeconfigPublic drops the embedded internal CA from the admin kubeconfig
+// so `oc` validates api.<fqdn> against the system trust store (the Let's
+// Encrypt cert chains to a public root) instead of failing with "certificate
+// signed by unknown authority". The original — needed for the internal api-int
+// endpoint and as break-glass — is preserved alongside as <kubeconfig>.internal-ca.
+// Idempotent: once the CA is gone the file no longer matches, so resumes skip it.
+func (s *Stage) makeKubeconfigPublic(ctx context.Context, oc, kubeconfig, clusterEntry string) error {
+	data, err := os.ReadFile(kubeconfig)
+	if err != nil {
+		return fmt.Errorf("read kubeconfig: %w", err)
+	}
+	if !bytes.Contains(data, []byte("certificate-authority-data")) {
+		return nil // already public-trust
+	}
+	backup := kubeconfig + ".internal-ca"
+	if _, err := os.Stat(backup); errors.Is(err, os.ErrNotExist) {
+		if err := os.WriteFile(backup, data, 0o600); err != nil {
+			return fmt.Errorf("back up kubeconfig: %w", err)
+		}
+	}
+	if _, err := s.cmd.Run(ctx, oc, "--kubeconfig", kubeconfig,
+		"config", "unset", "clusters."+clusterEntry+".certificate-authority-data"); err != nil {
+		return fmt.Errorf("strip internal CA from kubeconfig: %w", err)
+	}
+	logrus.Infof("rewrote %s to validate the Let's Encrypt cert via system trust "+
+		"(internal-CA copy saved at %s)", kubeconfig, backup)
 	return nil
 }
 
