@@ -58,6 +58,14 @@ Setting `--tls-email` enables certificate issuance for `api.<fqdn>` and
 
 > `--tls-email` **requires** `--dns-provider`.
 
+Two certificates are issued and applied: the `api.<fqdn>` cert becomes the API
+server's serving cert (`apiserver/cluster`), and the `*.apps.<fqdn>` cert
+becomes the ingress controller's default cert (`ingresscontroller/default`).
+The apps cert is a **single-level** wildcard: it covers OpenShift's default
+routes, which all sit directly under `apps.<fqdn>` (e.g.
+`console-openshift-console.apps.<fqdn>`, `oauth-openshift.apps.<fqdn>`), but not
+a deeper name like `x.y.apps.<fqdn>`.
+
 ```sh
 easyshift create --name lab \
   --network-mode bridge --bridge br0 \
