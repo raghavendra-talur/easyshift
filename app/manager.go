@@ -28,6 +28,7 @@ import (
 	"github.com/raghavendra-talur/easyshift/stages/generatesshkey"
 	"github.com/raghavendra-talur/easyshift/stages/registercluster"
 	"github.com/raghavendra-talur/easyshift/stages/upsertdns"
+	"github.com/raghavendra-talur/easyshift/stages/verifymasterip"
 	"github.com/raghavendra-talur/easyshift/stages/waitforinstall"
 )
 
@@ -70,6 +71,7 @@ func (cm *ClusterManager) buildStages() []interfaces.Stage {
 		embedignitioniso.New(d.Installer, d.VM),
 		createlibvirtnetwork.New(d.Net, d.VM),
 		createmastervms.New(d.VM, d.Host),
+		verifymasterip.New(d.Host),
 		waitforinstall.New(d.Installer, d.CSR, d.Hostname, d.VM),
 		applytlscerts.New(d.NewCertIssuer, d.Cmd),
 		finalize.New(),

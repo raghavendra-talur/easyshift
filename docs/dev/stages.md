@@ -81,9 +81,10 @@ In `buildStages` order:
 | 9 | `embedignitioniso` | Builds the bootstrap-in-place boot ISO + uploads it to the pool. | `Installer`, `VM` |
 | 10 | `createlibvirtnetwork` | Ensures the shared NAT network + this cluster's DHCP reservation. | `Net`, `VM` |
 | 11 | `createmastervms` | Creates the master VM(s) booting from the ISO. | `VM`, `Host` |
-| 12 | `waitforinstall` | Waits for install-complete; approves CSRs; injects hostname. | `Installer`, `CSR`, `Hostname`, `VM` |
-| 13 | `applytlscerts` | Issues + applies Let's Encrypt certs (if `--tls-email`). | `NewCertIssuer`, `Cmd` |
-| 14 | `finalize` | Marks the cluster running. | — |
+| 12 | `verifymasterip` | Bridge mode only: aborts fast if the booted node didn't take its reserved IP (else etcd would pin the wrong address). No-op in NAT. | `Host` |
+| 13 | `waitforinstall` | Waits for install-complete; approves CSRs; injects hostname. | `Installer`, `CSR`, `Hostname`, `VM` |
+| 14 | `applytlscerts` | Issues + applies Let's Encrypt certs (if `--tls-email`). | `NewCertIssuer`, `Cmd` |
+| 15 | `finalize` | Marks the cluster running. | — |
 
 Preflight checks live on the stages that own the relevant precondition — e.g.
 `createmastervms` preflights libvirt reachability, storage pool, CPU

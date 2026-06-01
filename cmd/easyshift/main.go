@@ -101,7 +101,7 @@ It provides a simple interface for cluster lifecycle management.`,
 			"Uses a throwaway config dir; prints a trace of every operation the real run would have performed.")
 
 	rootCmd.AddCommand(
-		newCreateCommand(&mgr),
+		newCreateCommand(&mgr, &simBundle),
 		newStartCommand(&mgr),
 		newStopCommand(&mgr),
 		newDeleteCommand(&mgr),
@@ -116,7 +116,7 @@ It provides a simple interface for cluster lifecycle management.`,
 	}
 }
 
-func newCreateCommand(mgr **app.ClusterManager) *cobra.Command {
+func newCreateCommand(mgr **app.ClusterManager, simBundle **fakes.Bundle) *cobra.Command {
 	var (
 		name        string
 		baseDomain  string
@@ -143,7 +143,7 @@ func newCreateCommand(mgr **app.ClusterManager) *cobra.Command {
 		Short:       "Create a new OpenShift cluster",
 		Annotations: map[string]string{annotationNeedsFileServer: "true"},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return (*mgr).Create(context.Background(), &config.ClusterConfig{
+			c := &config.ClusterConfig{
 				Name:        name,
 				Domain:      baseDomain,
 				OCPVersion:  ocpVersion,
@@ -162,7 +162,14 @@ func newCreateCommand(mgr **app.ClusterManager) *cobra.Command {
 				TLSEmail:    tlsEmail,
 				TLSStaging:  tlsStaging,
 				MagicDNS:    magicDNS,
-			})
+			}
+			// In a bridge-mode simulation there is no real node, so pretend it
+			// came up on its reserved IP — otherwise the verify-master-ip stage
+			// would poll the fake host until it times out.
+			if simBundle != nil && *simBundle != nil && c.NetworkMode == config.NetworkModeBridge {
+				(*simBundle).Host.ARPTable = map[string]string{c.MasterMAC: c.MasterIP}
+			}
+			return (*mgr).Create(context.Background(), c)
 		},
 	}
 

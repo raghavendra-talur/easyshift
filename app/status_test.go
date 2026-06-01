@@ -62,16 +62,22 @@ func TestStatus_BridgeMode_SurfacesProblems(t *testing.T) {
 	cfg, deps, bundle := newTestEnv(t)
 	c := newBridgeModeCluster("bad", "br0")
 	withDNSRecords(bundle, c)
+
+	mgr := app.NewClusterManager(cfg, deps)
+	if err := mgr.Create(context.Background(), c); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// The cluster came up fine, then drifted into a broken state: the node is
+	// answering on the wrong IP, its VM is shut off, and the API is
+	// unreachable. Status must surface all of it. (Injected after Create
+	// because the verify-master-ip stage would — correctly — refuse to create
+	// a cluster whose node is on the wrong IP.)
 	bundle.Host.ARPTable = map[string]string{c.MasterMAC: "10.99.99.99"} // wrong IP
 	bundle.Cmd.Output = []byte("shut off\n")
 	bundle.Host.TCPReachable = map[string]error{
 		c.MasterIP + ":6443":                       errors.New("connection refused"),
 		"api." + c.Name + "." + c.Domain + ":6443": errors.New("connection refused"),
-	}
-
-	mgr := app.NewClusterManager(cfg, deps)
-	if err := mgr.Create(context.Background(), c); err != nil {
-		t.Fatalf("Create: %v", err)
 	}
 
 	rep, err := mgr.Status(context.Background(), "bad")

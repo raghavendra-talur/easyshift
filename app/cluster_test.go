@@ -37,10 +37,18 @@ func newBridgeModeCluster(name, bridge string) *config.ClusterConfig {
 	c := newTestCluster(name)
 	c.NetworkMode = config.NetworkModeBridge
 	c.Bridge = bridge
-	c.MasterMAC = "52:54:00:11:22:33"
-	c.MasterIP = "192.168.1.50"
+	c.MasterMAC = testBridgeMAC
+	c.MasterIP = testBridgeIP
 	return c
 }
+
+// Canonical bridge-mode MAC/IP used by newBridgeModeCluster. newTestEnv seeds
+// the fake host's ARP table with this pair so the verify-master-ip stage sees
+// the master "come up" on its reserved IP in successful-create tests.
+const (
+	testBridgeMAC = "52:54:00:11:22:33"
+	testBridgeIP  = "192.168.1.50"
+)
 
 // withDNSRecords seeds the fake DNS resolver with the three records bridge
 // mode requires for the cluster's name + domain, all pointing at MasterIP.
@@ -64,6 +72,9 @@ func newTestEnv(t *testing.T) (*config.Config, interfaces.Deps, *fakes.Bundle) {
 		t.Fatalf("write fake pull secret: %v", err)
 	}
 	deps, bundle := fakes.All()
+	// Seed the fake ARP so the verify-master-ip stage sees the bridge master
+	// at its reserved IP and returns immediately (NAT tests skip the stage).
+	bundle.Host.ARPTable = map[string]string{testBridgeMAC: testBridgeIP}
 	return cfg, deps, bundle
 }
 
@@ -152,6 +163,7 @@ func TestCreateCluster_HappyPath(t *testing.T) {
 		"embed-ignition-iso",
 		"create-libvirt-network",
 		"create-master-vms",
+		"verify-master-ip",
 		"upsert-dns",
 		"wait-for-install",
 		"apply-tls-certs",
