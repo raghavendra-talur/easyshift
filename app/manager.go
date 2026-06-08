@@ -117,7 +117,20 @@ func (cm *ClusterManager) Create(ctx context.Context, c *config.ClusterConfig) e
 	if err := cm.runner.Preflight(ctx, sc, stages); err != nil {
 		return fmt.Errorf("preflight: %w", err)
 	}
-	return cm.runner.Apply(ctx, sc, stages)
+	if err := cm.runner.Apply(ctx, sc, stages); err != nil {
+		return err
+	}
+
+	// A successful Apply means every stage — including finalize — is recorded
+	// applied, so the cluster is fully built. On a resume the runner skips
+	// already-applied stages, so finalize's in-memory effect (State=running)
+	// is never re-applied; without this the cluster stays stuck at "creating"
+	// in config.json even though it is up. Re-assert the terminal state.
+	if c.State != config.ClusterStateRunning {
+		c.State = config.ClusterStateRunning
+		return cm.cfg.Save()
+	}
+	return nil
 }
 
 // Start boots all nodes for a stopped cluster.

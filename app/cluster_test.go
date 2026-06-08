@@ -255,6 +255,38 @@ func TestCreateCluster_Idempotent(t *testing.T) {
 	}
 }
 
+// TestCreateCluster_HealsStuckCreatingState reproduces a config/state divergence:
+// state.json records finalize as applied, but config.json still shows the cluster
+// as "creating" (a stale Save clobbered the running state). Re-running create must
+// self-heal it to running even though finalize is skipped as already-applied.
+func TestCreateCluster_HealsStuckCreatingState(t *testing.T) {
+	cfg, deps, bundle := newTestEnv(t)
+	mgr := app.NewClusterManager(cfg, deps)
+
+	if err := mgr.Create(context.Background(), newTestCluster("demo")); err != nil {
+		t.Fatalf("first Create: %v", err)
+	}
+
+	// Simulate the clobber: persisted state regresses to creating while
+	// state.json keeps every stage (including finalize) applied.
+	cfg.Clusters[0].State = config.ClusterStateCreating
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	vmCalls := len(bundle.VM.Created)
+
+	if err := mgr.Create(context.Background(), newTestCluster("demo")); err != nil {
+		t.Fatalf("re-create to heal: %v", err)
+	}
+	if got, want := cfg.Clusters[0].State, config.ClusterStateRunning; got != want {
+		t.Errorf("state not healed: got %q want %q", got, want)
+	}
+	// All stages already applied, so nothing should re-run on the healing pass.
+	if got := len(bundle.VM.Created); got != vmCalls {
+		t.Errorf("VM.Created changed on heal (delta %d); stages should be skipped", got-vmCalls)
+	}
+}
+
 // TestDeleteCluster_RollsBackAppliedStages confirms Delete walks the stage
 // list in reverse and invokes VM.Delete + Net.RemoveHost (the shared network
 // itself is left intact).
