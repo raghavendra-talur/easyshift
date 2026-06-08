@@ -184,6 +184,17 @@ func (v *VMManager) IsRunning(_ context.Context, name string) (bool, error) {
 	return v.running[name], v.Err
 }
 
+// SetRunning marks a VM running (or not) for IsRunning without recording a
+// Start/Stop call. Test helper.
+func (v *VMManager) SetRunning(name string, running bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.running == nil {
+		v.running = map[string]bool{}
+	}
+	v.running[name] = running
+}
+
 // ImportISO records volName and returns a deterministic fake pool path.
 func (v *VMManager) ImportISO(_ context.Context, _, volName, _ string) (string, error) {
 	v.mu.Lock()
@@ -223,7 +234,11 @@ type NetworkProvisioner struct {
 	Ensured []interfaces.NetworkSpec // EnsureNetwork calls
 	Added   []HostCall               // AddHost calls
 	Removed []HostCall               // RemoveHost calls
-	Err     error
+	// Info is what InspectNetwork returns; tests seed it to model the live
+	// network. ResetCalls records the networks passed to ResetNetwork.
+	Info       interfaces.NetworkInfo
+	ResetCalls []string
+	Err        error
 }
 
 // HostCall records one AddHost/RemoveHost invocation.
@@ -253,6 +268,22 @@ func (n *NetworkProvisioner) RemoveHost(_ context.Context, network string, host 
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.Removed = append(n.Removed, HostCall{Network: network, Host: host})
+	return n.Err
+}
+
+// InspectNetwork returns the seeded Info snapshot.
+func (n *NetworkProvisioner) InspectNetwork(_ context.Context, _ string) (interfaces.NetworkInfo, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.Info, n.Err
+}
+
+// ResetNetwork records the call and marks the seeded network as gone.
+func (n *NetworkProvisioner) ResetNetwork(_ context.Context, network string) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.ResetCalls = append(n.ResetCalls, network)
+	n.Info = interfaces.NetworkInfo{Exists: false}
 	return n.Err
 }
 

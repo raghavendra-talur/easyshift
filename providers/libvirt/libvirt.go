@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -277,6 +278,98 @@ func (p *LibvirtNetworkProvisioner) RemoveHost(ctx context.Context, network stri
 		return fmt.Errorf("net-update delete host %s on %s: %w", host.MAC, network, err)
 	}
 	return nil
+}
+
+// InspectNetwork reads the network's persistent definition (range + static
+// reservations) and its live dynamic leases. A network that isn't defined
+// yields NetworkInfo{Exists: false} with no error.
+func (p *LibvirtNetworkProvisioner) InspectNetwork(ctx context.Context, name string) (interfaces.NetworkInfo, error) {
+	xml, err := p.virsh(ctx, "net-dumpxml", name)
+	if err != nil {
+		// net-dumpxml fails only when the network isn't defined.
+		return interfaces.NetworkInfo{Exists: false}, nil
+	}
+	info := interfaces.NetworkInfo{Exists: true}
+	info.DHCPRangeStart, info.DHCPRangeEnd = parseDHCPRange(string(xml))
+	info.Reservations = parseReservations(string(xml))
+	// Leases are best-effort: a stopped network has no lease table, which is
+	// not an error for our purposes.
+	if out, lerr := p.virsh(ctx, "net-dhcp-leases", name); lerr == nil {
+		info.Leases = parseLeases(string(out))
+	}
+	return info, nil
+}
+
+// ResetNetwork stops and undefines the network so a subsequent EnsureNetwork
+// rebuilds it from the current definition (fixing an outdated DHCP range and
+// flushing stale dynamic leases). Idempotent.
+func (p *LibvirtNetworkProvisioner) ResetNetwork(ctx context.Context, name string) error {
+	// net-destroy fails if already stopped; ignore that and undefine anyway.
+	_, _ = p.virsh(ctx, "net-destroy", name)
+	out, err := p.virsh(ctx, "net-undefine", name)
+	if err != nil && !strings.Contains(string(out), "not found") && !strings.Contains(err.Error(), "Network not found") {
+		return fmt.Errorf("net-undefine %s: %w", name, err)
+	}
+	return nil
+}
+
+var (
+	reDHCPRange = regexp.MustCompile(`<range\s+start='([^']+)'\s+end='([^']+)'`)
+	reHostLine  = regexp.MustCompile(`<host\b[^>]*/?>`)
+	reAttrMAC   = regexp.MustCompile(`mac='([^']+)'`)
+	reAttrIP    = regexp.MustCompile(`ip='([^']+)'`)
+	reAttrName  = regexp.MustCompile(`name='([^']*)'`)
+)
+
+func parseDHCPRange(xml string) (start, end string) {
+	if m := reDHCPRange.FindStringSubmatch(xml); m != nil {
+		return m[1], m[2]
+	}
+	return "", ""
+}
+
+func parseReservations(xml string) []interfaces.DHCPHost {
+	var hosts []interfaces.DHCPHost
+	for _, line := range reHostLine.FindAllString(xml, -1) {
+		h := interfaces.DHCPHost{}
+		if m := reAttrMAC.FindStringSubmatch(line); m != nil {
+			h.MAC = m[1]
+		}
+		if m := reAttrIP.FindStringSubmatch(line); m != nil {
+			h.IP = m[1]
+		}
+		if m := reAttrName.FindStringSubmatch(line); m != nil {
+			h.Hostname = m[1]
+		}
+		if h.MAC != "" || h.IP != "" {
+			hosts = append(hosts, h)
+		}
+	}
+	return hosts
+}
+
+// parseLeases parses the `virsh net-dhcp-leases` table. Best-effort: the format
+// is " <date> <time> <mac> <proto> <ip>/<prefix> <hostname> <clientid>", and
+// rows that don't fit are skipped.
+func parseLeases(out string) []interfaces.DHCPLease {
+	var leases []interfaces.DHCPLease
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		// Need at least date, time, mac, proto, ip.
+		if len(f) < 5 || !strings.Contains(f[2], ":") {
+			continue
+		}
+		ip := f[4]
+		if i := strings.IndexByte(ip, '/'); i >= 0 {
+			ip = ip[:i]
+		}
+		lease := interfaces.DHCPLease{MAC: f[2], IP: ip}
+		if len(f) >= 6 && f[5] != "-" {
+			lease.Hostname = f[5]
+		}
+		leases = append(leases, lease)
+	}
+	return leases
 }
 
 // buildNetworkXML assembles the shared NAT network definition (no

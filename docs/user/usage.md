@@ -98,6 +98,26 @@ directory.
 easyshift delete demo
 ```
 
+### `nat-network reset` — clean up the shared NAT network
+
+Reconciles the shared libvirt NAT network (`easyshift-nat`) with the clusters
+easyshift knows about, and repairs drift accumulated by crashed/aborted installs:
+
+- removes DHCP reservations and `config.json` IP/MAC allocations that belong to
+  no current cluster (these can otherwise exhaust the small allocation range);
+- recreates the network if its DHCP range predates the current layout, which
+  also flushes stale dynamic leases.
+
+```sh
+easyshift nat-network reset --dry-run   # report what would change
+easyshift nat-network reset             # apply it
+easyshift nat-network reset --force     # also OK to recreate while clusters run
+```
+
+Recreating the network briefly drops connectivity for any running NAT cluster,
+so `reset` refuses to do it while one is up unless you pass `--force`. The
+surviving clusters' reservations are restored automatically.
+
 ### `pull-secret` / `dns`
 
 Credential management — see [configuration.md](configuration.md).

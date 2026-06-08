@@ -70,6 +70,22 @@ bootstrapping. SNO bootstrap-in-place takes a while; watch progress on the VM
 console or in `.openshift_install.log`. Installs can run for an hour-plus before
 the API is up.
 
+### NAT mode: install hangs, kubelet reports the wrong node IP
+
+If a NAT install never finishes and the VM console / `.openshift_install.log`
+shows kubelet complaining that its node IP (e.g. `192.168.126.250`) "not found
+in the host's network interfaces", the master picked up a stale dynamic DHCP
+lease instead of its reserved address. easyshift now pins the master IP
+statically, but a NAT network created by an older version keeps its original
+(overlapping) DHCP range and accumulated leases. Reset it:
+
+```sh
+easyshift nat-network reset --dry-run   # confirm an outdated range / stale leases
+easyshift nat-network reset             # recreate the network cleanly
+```
+
+Then re-run `easyshift create`.
+
 ### TLS cert is untrusted
 
 You're using `--tls-staging` (staging certs are signed by an untrusted root).
@@ -93,3 +109,7 @@ VMs, rolls back every applied stage (VMs, libvirt artifacts, DNS records, and
 the global IP/MAC reservations), and removes the cluster directory. Avoid
 hand-editing `config.json` to remove a cluster — you'll leak those reservations
 and libvirt objects.
+
+If a crashed run left the shared NAT network out of sync anyway — orphaned
+reservations, leaked allocations, or an outdated DHCP range — reconcile it with
+`easyshift nat-network reset` (use `--dry-run` first to preview).

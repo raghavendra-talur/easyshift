@@ -35,6 +35,51 @@ func TestBuildNetworkXML_Shared(t *testing.T) {
 	}
 }
 
+// TestParseNetworkXML covers extracting the DHCP range and static reservations
+// from `virsh net-dumpxml` output, as nat-network reset relies on.
+func TestParseNetworkXML(t *testing.T) {
+	xml := `<network>
+  <name>easyshift-nat</name>
+  <forward mode='nat'/>
+  <ip address='192.168.126.1' netmask='255.255.255.0'>
+    <dhcp>
+      <range start='192.168.126.100' end='192.168.126.254'/>
+      <host mac='52:54:00:aa:bb:cc' name='master-0-c1' ip='192.168.126.5'/>
+      <host mac='52:54:00:99:99:99' name='master-0-gone' ip='192.168.126.6'/>
+    </dhcp>
+  </ip>
+</network>`
+	start, end := parseDHCPRange(xml)
+	if start != "192.168.126.100" || end != "192.168.126.254" {
+		t.Errorf("range: got %s-%s", start, end)
+	}
+	hosts := parseReservations(xml)
+	if len(hosts) != 2 {
+		t.Fatalf("expected 2 reservations, got %d: %+v", len(hosts), hosts)
+	}
+	if hosts[0].MAC != "52:54:00:aa:bb:cc" || hosts[0].IP != "192.168.126.5" || hosts[0].Hostname != "master-0-c1" {
+		t.Errorf("reservation[0] parsed wrong: %+v", hosts[0])
+	}
+}
+
+// TestParseLeases covers the best-effort `virsh net-dhcp-leases` table parser.
+func TestParseLeases(t *testing.T) {
+	out := ` Expiry Time           MAC address         Protocol   IP address            Hostname     Client ID
+-----------------------------------------------------------------------------------------------------
+ 2026-06-08 18:00:00   52:54:00:11:22:33   ipv4       192.168.126.250/24    -            01:52:54:00:11:22:33
+`
+	leases := parseLeases(out)
+	if len(leases) != 1 {
+		t.Fatalf("expected 1 lease, got %d: %+v", len(leases), leases)
+	}
+	if leases[0].MAC != "52:54:00:11:22:33" || leases[0].IP != "192.168.126.250" {
+		t.Errorf("lease parsed wrong: %+v", leases[0])
+	}
+	if leases[0].Hostname != "" {
+		t.Errorf("expected empty hostname for '-', got %q", leases[0].Hostname)
+	}
+}
+
 // TestBuildNetworkXML_WithDomain covers a (non-magic) network with an explicit
 // short bridge name and a local DNS domain.
 func TestBuildNetworkXML_WithDomain(t *testing.T) {

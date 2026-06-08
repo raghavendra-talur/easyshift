@@ -82,6 +82,26 @@ type DHCPHost struct {
 	Hostname string
 }
 
+// DHCPLease is a single dynamic lease observed on the network (as opposed to a
+// static DHCPHost reservation). Used only for the nat-network reset report.
+type DHCPLease struct {
+	MAC      string
+	IP       string
+	Hostname string
+}
+
+// NetworkInfo is a read-only snapshot of the shared NAT network's live state,
+// used by the nat-network reset command to detect drift between the network and
+// easyshift's config. DHCPRangeStart/End are full IPs (e.g. "192.168.126.100"),
+// empty when the network defines no DHCP range.
+type NetworkInfo struct {
+	Exists         bool
+	DHCPRangeStart string
+	DHCPRangeEnd   string
+	Reservations   []DHCPHost
+	Leases         []DHCPLease
+}
+
 // NetworkProvisioner manages the shared NAT network. EnsureNetwork creates it
 // idempotently (it's a host-global resource shared by all NAT clusters);
 // AddHost/RemoveHost add and remove a single master's DHCP reservation
@@ -90,6 +110,13 @@ type NetworkProvisioner interface {
 	EnsureNetwork(ctx context.Context, spec NetworkSpec) error
 	AddHost(ctx context.Context, network string, host DHCPHost) error
 	RemoveHost(ctx context.Context, network string, host DHCPHost) error
+	// InspectNetwork reads the network's live definition + leases. A
+	// non-existent network returns NetworkInfo{Exists: false} and no error.
+	InspectNetwork(ctx context.Context, name string) (NetworkInfo, error)
+	// ResetNetwork tears the network down (net-destroy + net-undefine) so a
+	// later EnsureNetwork recreates it cleanly. Idempotent: a missing or
+	// already-stopped network is treated as success.
+	ResetNetwork(ctx context.Context, name string) error
 }
 
 // InstallerSpec carries everything the Installer needs for one call. Binary

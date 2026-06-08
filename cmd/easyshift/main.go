@@ -107,6 +107,7 @@ It provides a simple interface for cluster lifecycle management.`,
 		newDeleteCommand(&mgr),
 		newListCommand(&mgr),
 		newStatusCommand(&mgr),
+		newNATNetworkCommand(&mgr),
 		newPullSecretCommand(cfg),
 		newDNSCommand(cfg),
 	)
@@ -290,6 +291,50 @@ func newStatusCommand(mgr **app.ClusterManager) *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func newNATNetworkCommand(mgr **app.ClusterManager) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "nat-network",
+		Short: "Inspect and maintain the shared libvirt NAT network",
+	}
+
+	var (
+		dryRun bool
+		force  bool
+	)
+	reset := &cobra.Command{
+		Use:   "reset",
+		Short: "Reconcile the shared NAT network with config: drop orphaned reservations/leaked allocations, and recreate it if its DHCP range is outdated",
+		Long: "Compares the shared libvirt NAT network against the clusters easyshift knows about and\n" +
+			"cleans up drift: DHCP reservations and IP/MAC allocations that belong to no cluster, plus a\n" +
+			"network whose DHCP range predates the current layout (recreated so the corrected range applies,\n" +
+			"which also flushes stale dynamic leases). Use --dry-run to see what would change.",
+		Args: cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			plan, err := (*mgr).PlanNATReset(context.Background(), force)
+			if err != nil {
+				return err
+			}
+			if dryRun {
+				plan.Print(os.Stdout, false)
+				return nil
+			}
+			if !plan.HasWork() {
+				plan.Print(os.Stdout, false)
+				return nil
+			}
+			if err := (*mgr).ApplyNATReset(context.Background(), plan); err != nil {
+				return err
+			}
+			plan.Print(os.Stdout, true)
+			return nil
+		},
+	}
+	reset.Flags().BoolVar(&dryRun, "dry-run", false, "Report what would change without modifying anything")
+	reset.Flags().BoolVar(&force, "force", false, "Allow recreating the network even when NAT clusters are running (they briefly lose connectivity)")
+	cmd.AddCommand(reset)
+	return cmd
 }
 
 func newPullSecretCommand(cfg *config.Config) *cobra.Command {
