@@ -107,3 +107,35 @@ func TestWriteInstallConfig_RendersBootstrapInPlace(t *testing.T) {
 		}
 	}
 }
+
+// TestEmbedNetworkKeyfileInISO_RunsCoreOSInstaller asserts the exact
+// coreos-installer subcommand and flags used to embed the static-network
+// keyfile, including -f so resumed builds can overwrite prior settings.
+func TestEmbedNetworkKeyfileInISO_RunsCoreOSInstaller(t *testing.T) {
+	cmd := &fakes.CommandRunner{}
+	installer := openshift.NewOpenShiftInstaller(cmd)
+	spec := interfaces.InstallerSpec{CoreOSInstallerPath: "/usr/bin/coreos-installer"}
+
+	if err := installer.EmbedNetworkKeyfileInISO(context.Background(), spec,
+		"/clusters/dr1/master.nmconnection", "/clusters/dr1/master.iso"); err != nil {
+		t.Fatalf("EmbedNetworkKeyfileInISO: %v", err)
+	}
+	if len(cmd.Calls) != 1 {
+		t.Fatalf("expected 1 command, got %d: %+v", len(cmd.Calls), cmd.Calls)
+	}
+	got := cmd.Calls[0]
+	if got.Name != "/usr/bin/coreos-installer" {
+		t.Errorf("binary = %q, want coreos-installer", got.Name)
+	}
+	args := strings.Join(got.Args, " ")
+	for _, want := range []string{
+		"iso network embed",
+		"-k /clusters/dr1/master.nmconnection",
+		"-f",
+		"/clusters/dr1/master.iso",
+	} {
+		if !strings.Contains(args, want) {
+			t.Errorf("args %q missing %q", args, want)
+		}
+	}
+}

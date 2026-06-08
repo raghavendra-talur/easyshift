@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 
 	"github.com/sirupsen/logrus"
 
@@ -261,8 +262,8 @@ func (cm *ClusterManager) validateNew(c *config.ClusterConfig) error {
 		if c.Bridge != "" {
 			return fmt.Errorf("NetworkMode=nat is incompatible with --bridge")
 		}
-		if c.MasterMAC != "" || c.MasterIP != "" || c.MachineCIDR != "" {
-			return fmt.Errorf("NetworkMode=nat assigns MAC/IP/CIDR automatically; remove --master-mac/--master-ip/--machine-cidr")
+		if c.MasterMAC != "" || c.MasterIP != "" || c.MachineCIDR != "" || c.Gateway != "" || c.DNS != "" {
+			return fmt.Errorf("NetworkMode=nat assigns MAC/IP/CIDR automatically; remove --master-mac/--master-ip/--machine-cidr/--gateway/--dns")
 		}
 	case config.NetworkModeBridge:
 		if c.Bridge == "" {
@@ -285,6 +286,14 @@ func (cm *ClusterManager) validateNew(c *config.ClusterConfig) error {
 		}
 		if _, _, err := net.ParseCIDR(c.MachineCIDR); err != nil {
 			return fmt.Errorf("invalid --machine-cidr %q: %w", c.MachineCIDR, err)
+		}
+		if c.Gateway != "" && !config.ValidateIP(c.Gateway) {
+			return fmt.Errorf("invalid --gateway %q", c.Gateway)
+		}
+		for _, dns := range strings.Split(c.DNS, ",") {
+			if dns = strings.TrimSpace(dns); dns != "" && !config.ValidateIP(dns) {
+				return fmt.Errorf("invalid --dns entry %q", dns)
+			}
 		}
 	default:
 		return fmt.Errorf("invalid NetworkMode %q (want %q or %q)", c.NetworkMode, config.NetworkModeNAT, config.NetworkModeBridge)
@@ -325,6 +334,14 @@ func (cm *ClusterManager) applyDefaults(c *config.ClusterConfig) {
 	if c.NetworkMode == config.NetworkModeBridge && c.MachineCIDR == "" && c.MasterIP != "" {
 		if cidr, err := config.DeriveMachineCIDR(c.MasterIP); err == nil {
 			c.MachineCIDR = cidr
+		}
+	}
+	// Default the static-network gateway to the .1 of the machine network so
+	// it surfaces in config.json; the keyfile renderer derives the same value
+	// as a fallback for resumed pre-existing clusters.
+	if c.NetworkMode == config.NetworkModeBridge && c.Gateway == "" && c.MachineCIDR != "" {
+		if gw, err := config.DeriveGateway(c.MachineCIDR); err == nil {
+			c.Gateway = gw
 		}
 	}
 }

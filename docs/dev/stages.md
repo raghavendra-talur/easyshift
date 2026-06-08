@@ -78,10 +78,10 @@ In `buildStages` order:
 | 6 | `downloadrhcos` | Fetches/caches the RHCOS live ISO + `coreos-installer`. | `Installer`, `Downloader` |
 | 7 | `generatesshkey` | Generates the cluster SSH keypair. | `Cmd`, `Host` |
 | 8 | `generateignition` | Renders `install-config.yaml` and produces ignition. | `Installer`, `DNS`, `Host` |
-| 9 | `embedignitioniso` | Builds the bootstrap-in-place boot ISO + uploads it to the pool. | `Installer`, `VM` |
+| 9 | `embedignitioniso` | Builds the bootstrap-in-place boot ISO + uploads it to the pool. In bridge mode also embeds a NetworkManager keyfile that pins the master's static IP, so the node never depends on DHCP timing. | `Installer`, `VM` |
 | 10 | `createlibvirtnetwork` | Ensures the shared NAT network + this cluster's DHCP reservation. | `Net`, `VM` |
 | 11 | `createmastervms` | Creates the master VM(s) booting from the ISO. | `VM`, `Host` |
-| 12 | `verifymasterip` | Bridge mode only: aborts fast if the booted node didn't take its reserved IP (else etcd would pin the wrong address). No-op in NAT. | `Host` |
+| 12 | `verifymasterip` | Bridge mode only: safety net that aborts fast if the booted node didn't come up on its IP (e.g. a LAN address conflict). The static keyfile from `embedignitioniso` is the primary defense; this catches the residual cases. No-op in NAT. | `Host` |
 | 13 | `waitforinstall` | Waits for install-complete; approves CSRs; injects hostname. | `Installer`, `CSR`, `Hostname`, `VM` |
 | 14 | `applytlscerts` | Issues + applies Let's Encrypt certs (if `--tls-email`), then rewrites the admin kubeconfig to trust the public cert. | `NewCertIssuer`, `Cmd` |
 | 15 | `finalize` | Marks the cluster running. | — |

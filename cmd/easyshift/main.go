@@ -130,6 +130,8 @@ func newCreateCommand(mgr **app.ClusterManager, simBundle **fakes.Bundle) *cobra
 		masterMAC   string
 		masterIP    string
 		machineCIDR string
+		gateway     string
+		dns         string
 		storagePool string
 		dnsProvider string
 		dnsZone     string
@@ -156,6 +158,8 @@ func newCreateCommand(mgr **app.ClusterManager, simBundle **fakes.Bundle) *cobra
 				MasterMAC:   masterMAC,
 				MasterIP:    masterIP,
 				MachineCIDR: machineCIDR,
+				Gateway:     gateway,
+				DNS:         dns,
 				StoragePool: storagePool,
 				DNSProvider: dnsProvider,
 				DNSZone:     dnsZone,
@@ -193,6 +197,10 @@ func newCreateCommand(mgr **app.ClusterManager, simBundle **fakes.Bundle) *cobra
 		"IP the router will hand to --master-mac; required in bridge mode")
 	cmd.Flags().StringVar(&machineCIDR, "machine-cidr", "",
 		"Override the LAN CIDR for networking.machineNetwork in install-config; defaults to /24 of --master-ip")
+	cmd.Flags().StringVar(&gateway, "gateway", "",
+		"Bridge mode: default gateway for the master's static network config; defaults to the .1 of --machine-cidr")
+	cmd.Flags().StringVar(&dns, "dns", "",
+		"Bridge mode: comma-separated DNS servers for the master's static network config; defaults to --gateway")
 	cmd.Flags().StringVar(&storagePool, "storage-pool", config.DefaultStoragePool,
 		"libvirt storage pool for the master disk and boot ISO (run `virsh pool-list --all` to see yours)")
 	cmd.Flags().StringVar(&dnsProvider, "dns-provider", "",

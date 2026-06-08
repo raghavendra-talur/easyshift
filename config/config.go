@@ -120,6 +120,13 @@ type ClusterConfig struct {
 	// NAT mode this is auto-derived from the libvirt subnet; in bridge mode
 	// it is derived from MasterIP as /24 unless the user overrides it.
 	MachineCIDR string `json:"machineCIDR,omitempty"`
+	// Gateway is the bridge-mode default gateway baked into the master's
+	// static network config. Defaults to the .1 host of MachineCIDR; ignored
+	// in NAT mode. See StaticNetworkKeyfile.
+	Gateway string `json:"gateway,omitempty"`
+	// DNS is a comma-separated list of DNS servers for the master's static
+	// network config in bridge mode. Defaults to Gateway; ignored in NAT mode.
+	DNS string `json:"dns,omitempty"`
 	// StoragePool is the libvirt pool where the master disk and boot ISO are
 	// created. Defaults to "default"; override with --storage-pool when your
 	// host's pool has a different name.

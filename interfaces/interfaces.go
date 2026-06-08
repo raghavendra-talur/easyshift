@@ -113,6 +113,11 @@ type Installer interface {
 	CreateIgnitionConfigs(ctx context.Context, spec InstallerSpec) error
 	CreateSingleNodeIgnition(ctx context.Context, spec InstallerSpec) error
 	EmbedIgnitionInISO(ctx context.Context, spec InstallerSpec, isoPath, ignitionPath, outputPath string) error
+	// EmbedNetworkKeyfileInISO embeds a NetworkManager keyfile into the live
+	// ISO (coreos-installer iso network embed) so the node applies static
+	// networking from first boot. Used in bridge mode to pin the master IP
+	// and eliminate the DHCP race. Operates in place on isoPath.
+	EmbedNetworkKeyfileInISO(ctx context.Context, spec InstallerSpec, keyfilePath, isoPath string) error
 	WaitForInstallComplete(ctx context.Context, spec InstallerSpec) error
 	// CoreOSLiveISOURL returns the RHCOS live ISO URL this build pins, via
 	// `openshift-install coreos print-stream-json`.

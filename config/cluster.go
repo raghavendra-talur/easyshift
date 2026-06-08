@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net"
+	"strings"
 )
 
 // MasterHostname is the FQDN baked into the master node (via the SSH
@@ -76,4 +77,84 @@ func DeriveMachineCIDR(masterIP string) (string, error) {
 		return "", fmt.Errorf("not an IPv4 address: %q", masterIP)
 	}
 	return fmt.Sprintf("%d.%d.%d.0/24", ip4[0], ip4[1], ip4[2]), nil
+}
+
+// DeriveGateway returns the conventional default gateway for a CIDR: the .1
+// host of the network (network address + 1).
+func DeriveGateway(cidr string) (string, error) {
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return "", fmt.Errorf("invalid CIDR %q: %w", cidr, err)
+	}
+	ip := ipnet.IP.To4()
+	if ip == nil {
+		return "", fmt.Errorf("not an IPv4 CIDR: %q", cidr)
+	}
+	gw := make(net.IP, len(ip))
+	copy(gw, ip)
+	gw[3]++
+	return gw.String(), nil
+}
+
+// prefixLen returns the prefix length (the /N) of a CIDR.
+func prefixLen(cidr string) (int, error) {
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return 0, fmt.Errorf("invalid CIDR %q: %w", cidr, err)
+	}
+	ones, _ := ipnet.Mask.Size()
+	return ones, nil
+}
+
+// StaticNetworkKeyfile renders a NetworkManager keyfile that pins the master
+// node to its reserved IP in bridge mode. Embedded in the live ISO (via
+// `coreos-installer iso network embed`), it makes the node configure its NIC
+// statically from first boot — including while Ignition runs — so etcd never
+// binds a DHCP-pool address grabbed before the router reservation took effect.
+// Matching on MAC binds the right interface regardless of kernel NIC naming,
+// and the keyfile propagates into the installed system so the static IP
+// persists past the bootstrap reboot. Gateway and DNS fall back to the .1 of
+// MachineCIDR when unset.
+func (c *ClusterConfig) StaticNetworkKeyfile() (string, error) {
+	if c.MasterMAC == "" || c.MasterIP == "" {
+		return "", fmt.Errorf("static network keyfile needs both master MAC and IP")
+	}
+	prefix, err := prefixLen(c.MachineCIDR)
+	if err != nil {
+		return "", err
+	}
+	gateway := c.Gateway
+	if gateway == "" {
+		if gateway, err = DeriveGateway(c.MachineCIDR); err != nil {
+			return "", err
+		}
+	}
+	dns := c.DNS
+	if dns == "" {
+		dns = gateway
+	}
+	// NetworkManager keyfile dns is ';'-separated and conventionally
+	// terminated with a trailing ';'.
+	dnsField := strings.ReplaceAll(dns, ",", ";")
+	if !strings.HasSuffix(dnsField, ";") {
+		dnsField += ";"
+	}
+	return fmt.Sprintf(`[connection]
+id=master-0-%s
+type=ethernet
+autoconnect=true
+autoconnect-priority=999
+
+[ethernet]
+mac-address=%s
+
+[ipv4]
+method=manual
+address1=%s/%d,%s
+dns=%s
+may-fail=false
+
+[ipv6]
+method=disabled
+`, c.Name, strings.ToUpper(c.MasterMAC), c.MasterIP, prefix, gateway, dnsField), nil
 }

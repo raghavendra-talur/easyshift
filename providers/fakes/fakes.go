@@ -265,8 +265,12 @@ type Installer struct {
 	CreatedIgnitions     bool
 	CreatedSingleNodeIgn bool
 	EmbeddedISO          bool
-	WaitedForInstall     bool
-	WaitForInstallCalls  int
+	EmbeddedNetwork      bool
+	// LastNetworkKeyfile is the keyfile path passed to the most recent
+	// EmbedNetworkKeyfileInISO call (empty if never called).
+	LastNetworkKeyfile  string
+	WaitedForInstall    bool
+	WaitForInstallCalls int
 	// WaitForInstallTimeouts, if > 0, causes WaitForInstallComplete to fail
 	// with a synthetic "exit status 6" error that many times before
 	// succeeding. Used to exercise easyshift's retry loop.
@@ -309,6 +313,15 @@ func (i *Installer) EmbedIgnitionInISO(_ context.Context, spec interfaces.Instal
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	i.EmbeddedISO = true
+	i.record(spec)
+	return i.Err
+}
+
+func (i *Installer) EmbedNetworkKeyfileInISO(_ context.Context, spec interfaces.InstallerSpec, keyfilePath, _ string) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.EmbeddedNetwork = true
+	i.LastNetworkKeyfile = keyfilePath
 	i.record(spec)
 	return i.Err
 }

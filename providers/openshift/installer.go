@@ -145,6 +145,22 @@ func (i *OpenShiftInstaller) EmbedIgnitionInISO(ctx context.Context, spec interf
 	return nil
 }
 
+// EmbedNetworkKeyfileInISO runs `coreos-installer iso network embed`, planting
+// a NetworkManager keyfile in the live ISO so the node configures its NIC
+// statically from first boot. -f overwrites any existing network settings so
+// the call is safe on a resumed build.
+func (i *OpenShiftInstaller) EmbedNetworkKeyfileInISO(ctx context.Context, spec interfaces.InstallerSpec, keyfilePath, isoPath string) error {
+	if _, err := i.cmd.Run(ctx, spec.CoreOSInstallerPath,
+		"iso", "network", "embed",
+		"-k", keyfilePath,
+		"-f",
+		isoPath,
+	); err != nil {
+		return fmt.Errorf("embed network keyfile in ISO: %w", err)
+	}
+	return nil
+}
+
 // WaitForInstallComplete blocks until install completes.
 func (i *OpenShiftInstaller) WaitForInstallComplete(ctx context.Context, spec interfaces.InstallerSpec) error {
 	out, errOut := installerWriters(spec)

@@ -77,7 +77,9 @@ You provide:
    physical NIC enslaved and the bridge up. easyshift's preflight checks that
    the bridge exists, has at least one slave interface, and is up — and tells
    you how to fix it if not.
-2. **A DHCP reservation at your router** mapping the master's MAC to a fixed IP.
+2. **A free IP on your LAN** for the master (`--master-ip`), outside your
+   router's DHCP pool. A router DHCP reservation for the master's MAC still
+   works but is no longer required — see "Static IP" below.
 3. **DNS** for `api.<fqdn>`, `api-int.<fqdn>`, and `*.apps.<fqdn>` pointing at
    that IP — either created by you, or automated with `--dns-provider`
    (see [dns-and-tls.md](dns-and-tls.md)).
@@ -93,6 +95,28 @@ easyshift create --name lab \
 
 `--machine-cidr` defaults to the `/24` of `--master-ip`; override it if your LAN
 uses a different prefix.
+
+### Static IP (no DHCP race)
+
+In bridge mode the master is configured with a **static IP** rather than relying
+on your router's DHCP. easyshift embeds a NetworkManager keyfile (matched on
+`--master-mac`) into the boot ISO with `coreos-installer iso network embed`, so
+the node pins `--master-ip` from its very first boot — including while the
+OpenShift bootstrap runs. This eliminates a subtle failure: if the node briefly
+took a DHCP-pool address before the router's reservation kicked in, etcd would
+bake that wrong address into the cluster permanently. The static config also
+propagates into the installed system, so the IP survives the bootstrap reboot.
+
+The gateway and DNS server default to the `.1` of `--machine-cidr`. Override them
+when your network differs:
+
+```sh
+  --gateway 192.168.1.254 \
+  --dns 192.168.1.1,1.1.1.1     # comma-separated; defaults to --gateway
+```
+
+The `verify-master-ip` stage remains as a fast safety net: it aborts early if the
+node still doesn't answer on its reserved IP (e.g. an IP conflict on the LAN).
 
 ### Creating a bridge (one-time host setup)
 
