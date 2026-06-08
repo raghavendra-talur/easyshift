@@ -32,6 +32,19 @@ func (c *ClusterConfig) PrimaryMasterIP() string {
 	return ""
 }
 
+// PrimaryMasterMAC mirrors PrimaryMasterIP for the master's MAC: the
+// user-supplied MasterMAC in bridge mode, or the first allocated MAC in NAT
+// mode (populated by the allocate-network stage).
+func (c *ClusterConfig) PrimaryMasterMAC() string {
+	if c.MasterMAC != "" {
+		return c.MasterMAC
+	}
+	if len(c.MACAddresses) > 0 {
+		return c.MACAddresses[0]
+	}
+	return ""
+}
+
 // MagicDomain builds the wildcard-DNS base domain for an IP. sslip.io and
 // nip.io both resolve "<anything>.<ip>.<service>" to <ip>, giving the
 // cluster's api/api-int/*.apps names for free.
@@ -107,16 +120,21 @@ func prefixLen(cidr string) (int, error) {
 }
 
 // StaticNetworkKeyfile renders a NetworkManager keyfile that pins the master
-// node to its reserved IP in bridge mode. Embedded in the live ISO (via
-// `coreos-installer iso network embed`), it makes the node configure its NIC
-// statically from first boot — including while Ignition runs — so etcd never
-// binds a DHCP-pool address grabbed before the router reservation took effect.
-// Matching on MAC binds the right interface regardless of kernel NIC naming,
-// and the keyfile propagates into the installed system so the static IP
-// persists past the bootstrap reboot. Gateway and DNS fall back to the .1 of
-// MachineCIDR when unset.
+// node to its reserved IP. Embedded in the live ISO (via `coreos-installer iso
+// network embed`), it makes the node configure its NIC statically from first
+// boot — including while Ignition runs — so etcd never binds a DHCP-pool
+// address grabbed before the reservation took effect. It applies to both
+// network modes: in bridge mode the address races the user's router DHCP; in
+// NAT mode it races libvirt's dnsmasq, where a reservation that hasn't
+// propagated when the VM first DISCOVERs leaves the master on a sticky dynamic
+// pool lease (the wrong-nodeIP failure). Matching on MAC binds the right
+// interface regardless of kernel NIC naming, and the keyfile propagates into
+// the installed system so the static IP persists past the bootstrap reboot.
+// Gateway and DNS fall back to the .1 of MachineCIDR when unset.
 func (c *ClusterConfig) StaticNetworkKeyfile() (string, error) {
-	if c.MasterMAC == "" || c.MasterIP == "" {
+	mac := c.PrimaryMasterMAC()
+	ip := c.PrimaryMasterIP()
+	if mac == "" || ip == "" {
 		return "", fmt.Errorf("static network keyfile needs both master MAC and IP")
 	}
 	prefix, err := prefixLen(c.MachineCIDR)
@@ -156,5 +174,5 @@ may-fail=false
 
 [ipv6]
 method=disabled
-`, c.Name, strings.ToUpper(c.MasterMAC), c.MasterIP, prefix, gateway, dnsField), nil
+`, c.Name, strings.ToUpper(mac), ip, prefix, gateway, dnsField), nil
 }

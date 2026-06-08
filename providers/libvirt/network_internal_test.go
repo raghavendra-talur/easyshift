@@ -27,8 +27,11 @@ func TestBuildNetworkXML_Shared(t *testing.T) {
 	if strings.Contains(xml, "<host ") {
 		t.Errorf("reservations are added via net-update, not baked in:\n%s", xml)
 	}
-	if !strings.Contains(xml, "<range start='192.168.126.5' end='192.168.126.254'/>") {
-		t.Errorf("expected DHCP range:\n%s", xml)
+	// The dynamic pool must stay clear of the static reservation band
+	// [NetworkStart, NetworkEnd] (.5-.20) so a master can never be handed a
+	// dynamic lease that collides with — or strays from — its reserved address.
+	if !strings.Contains(xml, "<range start='192.168.126.100' end='192.168.126.254'/>") {
+		t.Errorf("expected DHCP range disjoint from reservations:\n%s", xml)
 	}
 }
 

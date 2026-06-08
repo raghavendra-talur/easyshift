@@ -3,7 +3,6 @@ package embedignitioniso
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -62,16 +61,20 @@ func TestApply_BridgeEmbedsNetworkKeyfile(t *testing.T) {
 	}
 }
 
-// TestApply_NATSkipsNetworkKeyfile confirms NAT mode (deterministic libvirt
-// DHCP) does not embed a static network keyfile.
-func TestApply_NATSkipsNetworkKeyfile(t *testing.T) {
+// TestApply_NATEmbedsNetworkKeyfile confirms NAT mode also pins the master's
+// allocated IP via a static NetworkManager keyfile — the master must not depend
+// on a (race-prone) libvirt dnsmasq lease for its nodeIP.
+func TestApply_NATEmbedsNetworkKeyfile(t *testing.T) {
 	inst := &fakes.Installer{}
 	vm := &fakes.VMManager{}
 	c := &config.ClusterConfig{
-		Name:        "demo",
-		Domain:      "local",
-		NetworkMode: config.NetworkModeNAT,
-		StoragePool: "default",
+		Name:         "demo",
+		Domain:       "local",
+		NetworkMode:  config.NetworkModeNAT,
+		StoragePool:  "default",
+		MACAddresses: []string{"52:54:00:ab:cd:ef"},
+		IPAddresses:  []string{"192.168.126.5"},
+		MachineCIDR:  "192.168.126.0/24",
 	}
 	sc := newStageContext(t, c)
 	if err := os.MkdirAll(sc.ClusterDir(), 0o700); err != nil {
@@ -82,10 +85,18 @@ func TestApply_NATSkipsNetworkKeyfile(t *testing.T) {
 	if err := s.Apply(context.Background(), sc); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
-	if inst.EmbeddedNetwork {
-		t.Error("NAT mode must not embed a static network keyfile")
+	if !inst.EmbeddedNetwork {
+		t.Fatal("expected EmbedNetworkKeyfileInISO to be called in NAT mode")
 	}
-	if _, err := os.Stat(filepath.Join(sc.ClusterDir(), "master.nmconnection")); !os.IsNotExist(err) {
-		t.Error("NAT mode must not write master.nmconnection")
+	data, err := os.ReadFile(inst.LastNetworkKeyfile)
+	if err != nil {
+		t.Fatalf("read embedded keyfile %q: %v", inst.LastNetworkKeyfile, err)
+	}
+	// Allocated IP pinned, gateway/DNS default to the NAT network's .1.
+	if !strings.Contains(string(data), "address1=192.168.126.5/24,192.168.126.1") {
+		t.Errorf("keyfile missing static address:\n%s", data)
+	}
+	if !strings.Contains(string(data), "mac-address=52:54:00:AB:CD:EF") {
+		t.Errorf("keyfile missing allocated MAC:\n%s", data)
 	}
 }

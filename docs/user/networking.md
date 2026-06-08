@@ -21,8 +21,12 @@ What happens:
 
 - **One shared libvirt NAT network** (`easyshift-nat`, subnet
   `192.168.126.0/24`) is created on the first NAT cluster and reused by every
-  NAT cluster after it. Each master gets a distinct, pinned IP via a DHCP
-  reservation, and a hostname (`master-0-<name>`) via DHCP option 12.
+  NAT cluster after it. Each master gets a distinct, **statically pinned IP**
+  (`.5`, `.6`, …) embedded in its boot ISO, so the node never depends on a DHCP
+  lease for its address — see "Static IP" below. A DHCP reservation is still
+  recorded as a backstop, and the dynamic DHCP pool (`.100`–`.254`) is kept
+  clear of those reserved addresses. The hostname (`master-0-<name>...`) is set
+  over SSH during install.
 - **Magic DNS** (`sslip.io`) gives the cluster a base domain derived from the
   master IP, e.g. master `192.168.126.5` →
   `demo.192.168.126.5.sslip.io`. `sslip.io`/`nip.io` are wildcard resolvers:
@@ -98,14 +102,21 @@ uses a different prefix.
 
 ### Static IP (no DHCP race)
 
-In bridge mode the master is configured with a **static IP** rather than relying
-on your router's DHCP. easyshift embeds a NetworkManager keyfile (matched on
-`--master-mac`) into the boot ISO with `coreos-installer iso network embed`, so
-the node pins `--master-ip` from its very first boot — including while the
-OpenShift bootstrap runs. This eliminates a subtle failure: if the node briefly
-took a DHCP-pool address before the router's reservation kicked in, etcd would
-bake that wrong address into the cluster permanently. The static config also
-propagates into the installed system, so the IP survives the bootstrap reboot.
+In **both** network modes the master is configured with a **static IP** rather
+than relying on DHCP. easyshift embeds a NetworkManager keyfile (matched on the
+master's MAC) into the boot ISO with `coreos-installer iso network embed`, so the
+node pins its address from its very first boot — including while the OpenShift
+bootstrap runs. This eliminates a subtle failure: if the node briefly took a
+DHCP-pool address before its reservation kicked in, etcd/kubelet would bake that
+wrong address (a wrong `nodeIP`) into the cluster permanently and the install
+would hang. The static config also propagates into the installed system, so the
+IP survives the bootstrap reboot.
+
+- **Bridge mode** pins `--master-ip` (gateway/DNS from `--gateway`/`--dns`).
+- **NAT mode** pins the auto-allocated address (`.5`, `.6`, …), with gateway and
+  DNS defaulting to the NAT network's `.1`. Because the node no longer receives
+  a DHCP-provided hostname (option 12), easyshift sets it over SSH during the
+  install instead.
 
 The gateway and DNS server default to the `.1` of `--machine-cidr`. Override them
 when your network differs:

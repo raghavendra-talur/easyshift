@@ -23,6 +23,17 @@ const (
 	NetworkStart     = 5
 	NetworkEnd       = 20
 
+	// DHCPDynamicStart/DHCPDynamicEnd bound the *dynamic* DHCP pool on the
+	// shared NAT network. The pool is kept strictly disjoint from — and above —
+	// the static reservation band [NetworkStart, NetworkEnd] so a master can
+	// never be handed a dynamic lease that collides with a reserved address (or
+	// strays onto one before its reservation propagates to dnsmasq). Masters are
+	// pinned statically anyway (see ClusterConfig.StaticNetworkKeyfile), so in
+	// practice nothing should ever lease from this pool; it exists only as a
+	// safety net.
+	DHCPDynamicStart = 100
+	DHCPDynamicEnd   = 254
+
 	// SharedNATNetwork is the single libvirt network ALL NAT-mode clusters
 	// attach to. It is a host-global resource (not per-cluster): created once
 	// on the first NAT cluster and never torn down by deleting one cluster, so

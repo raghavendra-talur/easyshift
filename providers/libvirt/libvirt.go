@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/raghavendra-talur/easyshift/config"
 	"github.com/raghavendra-talur/easyshift/interfaces"
 )
 
@@ -303,10 +304,11 @@ func buildNetworkXML(spec interfaces.NetworkSpec) string {
   %s%s
   <ip address='%s.1' netmask='255.255.255.0'>
     <dhcp>
-      <range start='%s.5' end='%s.254'/>
+      <range start='%s.%d' end='%s.%d'/>
     </dhcp>
   </ip>
-</network>`, spec.Name, bridge, domain, spec.Subnet, spec.Subnet, spec.Subnet)
+</network>`, spec.Name, bridge, domain, spec.Subnet,
+		spec.Subnet, config.DHCPDynamicStart, spec.Subnet, config.DHCPDynamicEnd)
 }
 
 func writeTempFile(pattern string, data []byte) (string, error) {

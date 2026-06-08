@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/raghavendra-talur/easyshift/config"
 	"github.com/raghavendra-talur/easyshift/interfaces"
 )
 
@@ -38,23 +37,25 @@ func (s *Stage) Apply(ctx context.Context, sc *interfaces.StageContext) error {
 	if err := s.installer.EmbedIgnitionInISO(ctx, sc.InstallerSpec(), srcISO, ignition, local); err != nil {
 		return err
 	}
-	// In bridge mode the node's address comes from the user's router DHCP, so
-	// it can race: grab a pool address before the MAC reservation takes effect,
-	// and etcd bakes the wrong IP in permanently. Embed a NetworkManager
-	// keyfile that pins the reserved IP statically from first boot, removing
-	// the dependency on DHCP timing entirely.
-	if sc.Cluster.NetworkMode == config.NetworkModeBridge {
-		keyfile, err := sc.Cluster.StaticNetworkKeyfile()
-		if err != nil {
-			return fmt.Errorf("render static network keyfile: %w", err)
-		}
-		keyfilePath := filepath.Join(sc.ClusterDir(), "master.nmconnection")
-		if err := os.WriteFile(keyfilePath, []byte(keyfile), 0o600); err != nil {
-			return fmt.Errorf("write network keyfile: %w", err)
-		}
-		if err := s.installer.EmbedNetworkKeyfileInISO(ctx, sc.InstallerSpec(), keyfilePath, local); err != nil {
-			return err
-		}
+	// Pin the master's address statically from first boot in BOTH network
+	// modes. The node's IP would otherwise come from DHCP and can race: grab a
+	// pool address before the reservation takes effect, and etcd/kubelet bake
+	// the wrong nodeIP in permanently. Bridge mode races the user's router;
+	// NAT mode races libvirt's dnsmasq (a reservation not yet propagated when
+	// the VM DISCOVERs leaves the master on a sticky dynamic lease). Embedding a
+	// NetworkManager keyfile that pins the reserved IP removes the DHCP-timing
+	// dependency entirely. The hostname is set separately by the SSH injector
+	// (wait-for-install), since a static NIC never receives DHCP option 12.
+	keyfile, err := sc.Cluster.StaticNetworkKeyfile()
+	if err != nil {
+		return fmt.Errorf("render static network keyfile: %w", err)
+	}
+	keyfilePath := filepath.Join(sc.ClusterDir(), "master.nmconnection")
+	if err := os.WriteFile(keyfilePath, []byte(keyfile), 0o600); err != nil {
+		return fmt.Errorf("write network keyfile: %w", err)
+	}
+	if err := s.installer.EmbedNetworkKeyfileInISO(ctx, sc.InstallerSpec(), keyfilePath, local); err != nil {
+		return err
 	}
 	// Upload into the pool so qemu (not just the easyshift user) can read it.
 	volPath, err := s.vm.ImportISO(ctx, sc.Cluster.StoragePool, sc.MasterISOVolName(), local)

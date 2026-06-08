@@ -989,6 +989,33 @@ func TestCreateCluster_LaunchesHostnameInjector(t *testing.T) {
 	}
 }
 
+// TestCreateCluster_LaunchesHostnameInjectorNAT confirms the hostname injector
+// also runs in NAT mode. The master now boots with a static NIC (no DHCP
+// option-12 hostname), so SSH injection is the only thing keeping the node from
+// registering permanently as localhost.
+func TestCreateCluster_LaunchesHostnameInjectorNAT(t *testing.T) {
+	cfg, deps, bundle := newTestEnv(t)
+	c := newTestCluster("nathost")
+
+	mgr := app.NewClusterManager(cfg, deps)
+	if err := mgr.Create(context.Background(), c); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if !bundle.Hostname.WasStarted() {
+		t.Error("expected hostname injector to be started during wait-for-install (NAT)")
+	}
+	want := config.MasterHostname(c)
+	if got := bundle.Hostname.LastHostname; got != want {
+		t.Errorf("hostname injector target: got %q want %q", got, want)
+	}
+	// The injector must target the master's allocated NAT IP, not an empty
+	// (bridge-only) MasterIP.
+	if got, want := bundle.Hostname.LastIP, c.PrimaryMasterIP(); got != want {
+		t.Errorf("hostname injector IP: got %q want %q", got, want)
+	}
+}
+
 // TestCreateCluster_RejectsMissingPullSecret confirms Create errors out
 // clearly when the pull secret has not been configured.
 func TestCreateCluster_RejectsMissingPullSecret(t *testing.T) {

@@ -58,12 +58,16 @@ func (s *Stage) Apply(ctx context.Context, sc *interfaces.StageContext) error {
 		_ = s.csr.Run(helperCtx, sc.OCBinaryPath(), sc.KubeconfigPath())
 	}()
 
+	// The master now boots with a static NIC in both network modes (see
+	// embed-ignition-iso), so it never receives a DHCP-provided hostname
+	// (option 12). Inject the hostname over SSH in either mode, otherwise
+	// node-valid-hostname registers the node permanently as localhost.
 	hostnameDone := make(chan struct{})
-	if sc.Cluster.NetworkMode == config.NetworkModeBridge && sc.Cluster.MasterIP != "" {
+	if masterIP := sc.Cluster.PrimaryMasterIP(); masterIP != "" {
 		go func() {
 			defer close(hostnameDone)
 			_ = s.hostname.Run(helperCtx,
-				sc.Cluster.MasterIP,
+				masterIP,
 				sshKeyPath(sc),
 				config.MasterHostname(sc.Cluster))
 		}()

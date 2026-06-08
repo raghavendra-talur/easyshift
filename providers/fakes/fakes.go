@@ -752,6 +752,9 @@ func (b *Bundle) WriteTrace(w io.Writer) {
 		if b.Installer.EmbeddedISO {
 			fmt.Fprintln(w, "  - EmbedIgnitionInISO")
 		}
+		if b.Installer.EmbeddedNetwork {
+			fmt.Fprintln(w, "  - EmbedNetworkKeyfileInISO (static master IP)")
+		}
 		if b.Installer.WaitedForInstall {
 			fmt.Fprintf(w, "  - WaitForInstallComplete (calls=%d)\n", b.Installer.WaitForInstallCalls)
 		}
