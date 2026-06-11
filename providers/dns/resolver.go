@@ -2,8 +2,10 @@ package dns
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
+	"os/exec"
 	"strings"
 
 	"github.com/TheEasyShift/easyshift/interfaces"
@@ -27,6 +29,9 @@ func NewDigDNSResolver(cmd interfaces.CommandRunner) *DigDNSResolver {
 func (r *DigDNSResolver) Resolve(ctx context.Context, name string) ([]string, error) {
 	out, err := r.cmd.Run(ctx, "dig", "+short", "+timeout=2", name)
 	if err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return nil, fmt.Errorf("`dig` not found on PATH: %w\n  hint: install bind-utils (Fedora/RHEL) or dnsutils (Debian/Ubuntu)", err)
+		}
 		return nil, fmt.Errorf("dig %s: %w", name, err)
 	}
 	var ips []string

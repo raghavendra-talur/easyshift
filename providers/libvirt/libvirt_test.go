@@ -3,6 +3,8 @@ package libvirt_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -126,6 +128,47 @@ func TestEnsureNetwork_IdempotentWhenExists(t *testing.T) {
 		if !hasFlagWithValue(call.Args, "-c", "qemu:///system") {
 			t.Errorf("virsh call missing -c qemu:///system: %v", call.Args)
 		}
+	}
+}
+
+// TestCheckAccess_ErrorHints verifies the preflight distinguishes a missing
+// virsh binary (install hint) from an unreachable daemon (libvirtd/group
+// hint) — the wrong hint sends the user debugging the wrong thing.
+func TestCheckAccess_ErrorHints(t *testing.T) {
+	cases := []struct {
+		name     string
+		err      error
+		want     string
+		dontWant string
+	}{
+		{
+			name:     "missing binary",
+			err:      fmt.Errorf("command virsh failed: %w", exec.ErrNotFound),
+			want:     "install the libvirt client tools",
+			dontWant: "'libvirt' group",
+		},
+		{
+			name:     "daemon unreachable",
+			err:      errors.New("command virsh failed: exit status 1"),
+			want:     "'libvirt' group",
+			dontWant: "install the libvirt client tools",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := &fakes.CommandRunner{Err: tc.err}
+			vm := libvirt.NewLibvirtVMManager(cmd)
+			err := vm.CheckAccess(context.Background())
+			if err == nil {
+				t.Fatal("CheckAccess: expected error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q missing hint %q", err, tc.want)
+			}
+			if strings.Contains(err.Error(), tc.dontWant) {
+				t.Errorf("error %q has wrong hint %q", err, tc.dontWant)
+			}
+		})
 	}
 }
 

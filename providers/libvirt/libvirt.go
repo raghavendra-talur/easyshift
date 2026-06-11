@@ -2,8 +2,10 @@ package libvirt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -186,6 +188,9 @@ func (m *LibvirtVMManager) RemoveISO(ctx context.Context, pool, volName string) 
 // or a polkit denial.
 func (m *LibvirtVMManager) CheckAccess(ctx context.Context) error {
 	if _, err := m.virsh(ctx, "list", "--name"); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return fmt.Errorf("`virsh` not found on PATH: %w\n  hint: install the libvirt client tools (libvirt-client on Fedora/RHEL, libvirt-clients on Debian/Ubuntu)", err)
+		}
 		return fmt.Errorf("libvirt at %s is not reachable: %w\n  hint: ensure libvirtd/virtqemud is running and your user is in the 'libvirt' group", LibvirtSystemURI, err)
 	}
 	return nil
