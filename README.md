@@ -1,43 +1,27 @@
 # easyshift
 
-An opinionated OpenShift installer for developers.
+An opinionated OpenShift installer for developers: one command takes your
+workstation from nothing to a reachable OpenShift cluster running as local VMs.
 
-`easyshift` provisions single-node OpenShift (SNO) clusters as libvirt VMs on
-your local Linux host. It is a small Go CLI that wraps `openshift-install`,
-`virsh`/`virt-install`, and (optionally) public DNS + Let's Encrypt so that
-`easyshift create` takes you from nothing to a reachable cluster with one
-command. It is opinionated on purpose: single master, sensible defaults, and a
-zero-config networking mode so you don't have to think about DNS for a throwaway
-cluster.
+At a glance:
 
-## Features
+| Aspect | What you get |
+| --- | --- |
+| Host OS | Linux today; macOS planned |
+| Privileges | No root — libvirt group access is enough |
+| Cluster shape | Always exactly 1 master (multi-master is out of scope by design); single-node today, multiple workers planned |
+| NAT networking (default) | Zero-config: magic wildcard DNS (`sslip.io`/`nip.io`), no records to manage; NAT clusters share one L2 segment and can reach each other — good for throwaway clusters and multi-cluster DR topologies |
+| Bridge networking | Real LAN IP via an existing host bridge, with manual DNS or automated Cloudflare DNS + Let's Encrypt TLS — for clusters other machines need to reach |
+| Lifecycle | Staged, idempotent, resumable: a failed `create` picks up where it stopped, `delete` rolls everything back |
 
-- **One-command SNO installs** — bootstrap-in-place from an embedded ignition
-  ISO; no separate bootstrap node.
-- **Zero-config NAT mode** — VMs run behind a libvirt NAT network with magic
-  wildcard DNS (`sslip.io`/`nip.io`), so cluster names resolve to the master IP
-  with no DNS records to manage.
-- **Shared NAT network for multi-cluster work** — all NAT clusters share one L2
-  segment and can reach each other (built for disaster-recovery topologies like
-  hub/spoke and replication).
-- **Bridge mode for LAN-reachable clusters** — attach VMs to a host Linux bridge
-  so the cluster gets a real LAN IP, with optional automated DNS (Cloudflare)
-  and browser-trusted TLS (Let's Encrypt via ACME DNS-01).
-- **Idempotent, resumable installs** — each install is a sequence of stages
-  tracked in `state.json`; a failed run resumes from where it stopped, and
-  `delete` rolls each stage back.
-- **Provider-agnostic by design** — DNS, TLS, libvirt, and host access sit
-  behind interfaces, and a `--simulate` mode runs the whole pipeline against
-  in-memory fakes.
+Requirements:
 
-## Requirements
-
-- A Linux host with KVM (CPU virtualization: `vmx`/`svm`).
-- libvirt with the `qemu:///system` connection, plus `virsh` and `virt-install`
-  on `PATH`. You need permission to use `qemu:///system` (libvirt-group
-  membership) — root is not required.
-- `ssh-keygen`, `tar`, and `dig` on `PATH`.
-- An OpenShift pull secret (from <https://console.redhat.com/openshift/install/pull-secret>).
+| Requirement | Notes |
+| --- | --- |
+| Linux host with KVM | CPU virtualization enabled (`vmx`/`svm`) |
+| libvirt (`qemu:///system`) | `virsh` and `virt-install` on `PATH`; libvirt-group membership is enough — root is not required |
+| CLI tools | `ssh-keygen`, `tar`, `dig` on `PATH` |
+| OpenShift pull secret | From <https://console.redhat.com/openshift/install/pull-secret> |
 
 ## Install
 
