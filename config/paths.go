@@ -102,6 +102,12 @@ func ValidatePullSecretJSON(configDir string) error {
 	if err != nil {
 		return fmt.Errorf("read pull secret: %w", err)
 	}
+	return ValidatePullSecretBytes(data)
+}
+
+// ValidatePullSecretBytes verifies data is JSON with the required "auths"
+// key. Used to vet a fetched secret before it is written to disk.
+func ValidatePullSecretBytes(data []byte) error {
 	var parsed map[string]json.RawMessage
 	if err := json.Unmarshal(data, &parsed); err != nil {
 		return fmt.Errorf("pull secret is not valid JSON: %w", err)
