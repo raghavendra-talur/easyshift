@@ -22,11 +22,11 @@ import (
 const annotationNeedsFileServer = "easyshift/needs-file-server"
 
 func main() {
-	// easyshift does not require running as root. Phase 1 (bridge mode) needs
-	// only libvirt-group membership; the libvirt-reachability preflight on
-	// stages that touch qemu:///system will surface the right error if the
-	// user is missing permissions. Phase 2 (NAT mode) will write under /etc/
-	// and run privileged commands via sudo from the relevant stages.
+	// easyshift does not require running as root. Both NAT and bridge mode
+	// need only libvirt-group membership; the libvirt-reachability preflight
+	// on stages that touch qemu:///system will surface the right error if the
+	// user is missing permissions. NAT mode resolves names via magic DNS
+	// (sslip.io/nip.io), so nothing under /etc/ is ever written.
 
 	var (
 		debug    bool
