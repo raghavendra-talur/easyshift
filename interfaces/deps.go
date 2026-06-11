@@ -17,6 +17,9 @@ type Deps struct {
 	Host       HostInspector
 	DNS        DNSResolver
 	DNSManager DNSManager
+	// PullSecret fetches the pull secret from the user's Red Hat account
+	// (device-code login). Consumed only by cmd — never by stages.
+	PullSecret PullSecretFetcher
 	// NewCertIssuer constructs a CertIssuer for per-cluster ACME settings
 	// (email + staging). Function-shaped because that state isn't known until
 	// a specific cluster is being created.

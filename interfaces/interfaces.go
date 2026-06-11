@@ -215,3 +215,20 @@ type HostInspector interface {
 	ARPLookup(mac string) (string, error)
 	DialTCP(addr string, timeout time.Duration) error
 }
+
+// DeviceAuthPrompt is what the user must be shown to complete an OAuth
+// device-code login: open the URI on any device and enter the code.
+type DeviceAuthPrompt struct {
+	VerificationURI string
+	UserCode        string
+}
+
+// PullSecretFetcher obtains the user's OpenShift pull secret from their
+// Red Hat account via the OAuth 2.0 device authorization grant. Call
+// StartDeviceAuth, show the returned prompt, then WaitAndFetch, which blocks
+// (polling) until the user authorizes, the code expires, or ctx is cancelled.
+// The caller owns all printing.
+type PullSecretFetcher interface {
+	StartDeviceAuth(ctx context.Context) (DeviceAuthPrompt, error)
+	WaitAndFetch(ctx context.Context) ([]byte, error)
+}
