@@ -1,6 +1,6 @@
 # Architecture
 
-easyshift is a small Go module (`github.com/raghavendra-talur/easyshift`)
+easyshift is a small Go module (`github.com/TheEasyShift/easyshift`)
 organized so you can read it top-down: the CLI wires up an assembler, the
 assembler runs an ordered list of stages, and each stage does one idempotent
 piece of work through narrow interfaces.

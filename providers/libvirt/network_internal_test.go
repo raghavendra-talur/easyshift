@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/raghavendra-talur/easyshift/interfaces"
+	"github.com/TheEasyShift/easyshift/interfaces"
 )
 
 // TestBuildNetworkXML_Shared covers the shared NAT network shape: the bridge

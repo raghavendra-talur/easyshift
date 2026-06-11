@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/raghavendra-talur/easyshift/providers/fakes"
+	"github.com/TheEasyShift/easyshift/providers/fakes"
 )
 
 const sampleKubeconfig = `apiVersion: v1

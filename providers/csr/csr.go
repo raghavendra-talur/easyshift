@@ -7,7 +7,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"github.com/raghavendra-talur/easyshift/interfaces"
+	"github.com/TheEasyShift/easyshift/interfaces"
 )
 
 // csrPollInterval governs how often the OCCSRApprover sweeps for Pending CSRs.

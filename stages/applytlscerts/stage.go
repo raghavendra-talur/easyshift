@@ -13,8 +13,8 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"github.com/raghavendra-talur/easyshift/config"
-	"github.com/raghavendra-talur/easyshift/interfaces"
+	"github.com/TheEasyShift/easyshift/config"
+	"github.com/TheEasyShift/easyshift/interfaces"
 )
 
 // Stage issues and applies the cluster's TLS certificates.

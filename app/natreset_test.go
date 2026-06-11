@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/raghavendra-talur/easyshift/app"
-	"github.com/raghavendra-talur/easyshift/config"
-	"github.com/raghavendra-talur/easyshift/interfaces"
+	"github.com/TheEasyShift/easyshift/app"
+	"github.com/TheEasyShift/easyshift/config"
+	"github.com/TheEasyShift/easyshift/interfaces"
 )
 
 func natCluster(name, ip, mac string) *config.ClusterConfig {

@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/raghavendra-talur/easyshift/config"
-	"github.com/raghavendra-talur/easyshift/interfaces"
+	"github.com/TheEasyShift/easyshift/config"
+	"github.com/TheEasyShift/easyshift/interfaces"
 )
 
 // Stage renders install-config and produces the SNO ignition.

@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/raghavendra-talur/easyshift/config"
-	"github.com/raghavendra-talur/easyshift/interfaces"
-	"github.com/raghavendra-talur/easyshift/providers/fakes"
-	"github.com/raghavendra-talur/easyshift/providers/openshift"
+	"github.com/TheEasyShift/easyshift/config"
+	"github.com/TheEasyShift/easyshift/interfaces"
+	"github.com/TheEasyShift/easyshift/providers/fakes"
+	"github.com/TheEasyShift/easyshift/providers/openshift"
 )
 
 // streamJSON mirrors the shape of `openshift-install coreos print-stream-json`.

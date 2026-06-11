@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/raghavendra-talur/easyshift/interfaces"
+	"github.com/TheEasyShift/easyshift/interfaces"
 )
 
 // SystemHostInspector is the real HostInspector backed by the running OS.

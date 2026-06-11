@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"text/template"
 
-	"github.com/raghavendra-talur/easyshift/interfaces"
+	"github.com/TheEasyShift/easyshift/interfaces"
 )
 
 // coreOSStream is the subset of `openshift-install coreos print-stream-json`

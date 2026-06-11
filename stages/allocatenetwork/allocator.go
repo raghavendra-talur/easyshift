@@ -4,7 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 
-	"github.com/raghavendra-talur/easyshift/config"
+	"github.com/TheEasyShift/easyshift/config"
 )
 
 const macPrefix = "52:54:00"

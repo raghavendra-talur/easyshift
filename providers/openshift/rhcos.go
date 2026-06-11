@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/raghavendra-talur/easyshift/config"
-	"github.com/raghavendra-talur/easyshift/interfaces"
+	"github.com/TheEasyShift/easyshift/config"
+	"github.com/TheEasyShift/easyshift/interfaces"
 )
 
 // OCPClientURL constructs the mirror URL for openshift-install / openshift-client.

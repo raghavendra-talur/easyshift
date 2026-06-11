@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/raghavendra-talur/easyshift/config"
-	"github.com/raghavendra-talur/easyshift/providers/libvirt"
+	"github.com/TheEasyShift/easyshift/config"
+	"github.com/TheEasyShift/easyshift/providers/libvirt"
 )
 
 // StatusCheck is one read-only diagnostic result.

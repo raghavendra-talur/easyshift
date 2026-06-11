@@ -10,7 +10,7 @@ import (
 	"github.com/libdns/cloudflare"
 	"github.com/libdns/libdns"
 
-	"github.com/raghavendra-talur/easyshift/config"
+	"github.com/TheEasyShift/easyshift/config"
 )
 
 // dnsRecordTTL is the TTL written for every cluster A record. Short enough

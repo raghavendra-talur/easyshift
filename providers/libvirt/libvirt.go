@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/raghavendra-talur/easyshift/config"
-	"github.com/raghavendra-talur/easyshift/interfaces"
+	"github.com/TheEasyShift/easyshift/config"
+	"github.com/TheEasyShift/easyshift/interfaces"
 )
 
 // LibvirtSystemURI is the libvirt connection URI easyshift targets for every

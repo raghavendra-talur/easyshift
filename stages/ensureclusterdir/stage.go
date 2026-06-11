@@ -6,7 +6,7 @@ import (
 	"context"
 	"os"
 
-	"github.com/raghavendra-talur/easyshift/interfaces"
+	"github.com/TheEasyShift/easyshift/interfaces"
 )
 
 // Stage ensures the per-cluster working directory exists.

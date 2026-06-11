@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/raghavendra-talur/easyshift/config"
+	"github.com/TheEasyShift/easyshift/config"
 )
 
 // StageOutcome records whether a stage's Apply succeeded.

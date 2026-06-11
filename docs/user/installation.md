@@ -62,7 +62,7 @@ The Makefile is the source of truth — it runs `go vet` and a gofmt check befor
 building, which a bare `go build` would skip.
 
 ```sh
-git clone https://github.com/raghavendra-talur/easyshift
+git clone https://github.com/TheEasyShift/easyshift
 cd easyshift
 make build        # produces ./easyshift at the repo root
 ```

@@ -6,16 +6,16 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/raghavendra-talur/easyshift/config"
-	"github.com/raghavendra-talur/easyshift/interfaces"
-	"github.com/raghavendra-talur/easyshift/providers/csr"
-	"github.com/raghavendra-talur/easyshift/providers/dns"
-	"github.com/raghavendra-talur/easyshift/providers/exec"
-	"github.com/raghavendra-talur/easyshift/providers/fileserver"
-	"github.com/raghavendra-talur/easyshift/providers/host"
-	"github.com/raghavendra-talur/easyshift/providers/libvirt"
-	"github.com/raghavendra-talur/easyshift/providers/openshift"
-	"github.com/raghavendra-talur/easyshift/providers/tls"
+	"github.com/TheEasyShift/easyshift/config"
+	"github.com/TheEasyShift/easyshift/interfaces"
+	"github.com/TheEasyShift/easyshift/providers/csr"
+	"github.com/TheEasyShift/easyshift/providers/dns"
+	"github.com/TheEasyShift/easyshift/providers/exec"
+	"github.com/TheEasyShift/easyshift/providers/fileserver"
+	"github.com/TheEasyShift/easyshift/providers/host"
+	"github.com/TheEasyShift/easyshift/providers/libvirt"
+	"github.com/TheEasyShift/easyshift/providers/openshift"
+	"github.com/TheEasyShift/easyshift/providers/tls"
 )
 
 // NewProductionDeps wires real implementations of every dependency, rooted

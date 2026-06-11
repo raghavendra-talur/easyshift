@@ -1,4 +1,4 @@
-module github.com/raghavendra-talur/easyshift
+module github.com/TheEasyShift/easyshift
 
 go 1.25.0
 

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/raghavendra-talur/easyshift/interfaces"
+	"github.com/TheEasyShift/easyshift/interfaces"
 )
 
 // Stage downloads the RHCOS live ISO.

@@ -8,9 +8,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/raghavendra-talur/easyshift/config"
-	"github.com/raghavendra-talur/easyshift/interfaces"
-	"github.com/raghavendra-talur/easyshift/providers/openshift"
+	"github.com/TheEasyShift/easyshift/config"
+	"github.com/TheEasyShift/easyshift/interfaces"
+	"github.com/TheEasyShift/easyshift/providers/openshift"
 )
 
 // Stage downloads the OCP CLI tooling.

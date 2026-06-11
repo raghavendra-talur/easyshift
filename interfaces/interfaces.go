@@ -9,7 +9,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/raghavendra-talur/easyshift/config"
+	"github.com/TheEasyShift/easyshift/config"
 )
 
 // CommandRunner abstracts process execution so business logic can be tested

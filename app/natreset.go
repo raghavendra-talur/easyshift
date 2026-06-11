@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/raghavendra-talur/easyshift/config"
-	"github.com/raghavendra-talur/easyshift/interfaces"
+	"github.com/TheEasyShift/easyshift/config"
+	"github.com/TheEasyShift/easyshift/interfaces"
 )
 
 // NATResetPlan is the read-only analysis of drift between the shared NAT

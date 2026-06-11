@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/raghavendra-talur/easyshift/app"
+	"github.com/TheEasyShift/easyshift/app"
 )
 
 // TestStatus_BridgeMode_AllGreen confirms a healthy bridge-mode cluster

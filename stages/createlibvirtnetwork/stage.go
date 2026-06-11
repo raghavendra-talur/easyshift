@@ -8,8 +8,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/raghavendra-talur/easyshift/config"
-	"github.com/raghavendra-talur/easyshift/interfaces"
+	"github.com/TheEasyShift/easyshift/config"
+	"github.com/TheEasyShift/easyshift/interfaces"
 )
 
 // Stage ensures the shared NAT network and the cluster's reservation.

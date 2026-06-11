@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/raghavendra-talur/easyshift/config"
-	"github.com/raghavendra-talur/easyshift/interfaces"
-	"github.com/raghavendra-talur/easyshift/providers/fakes"
+	"github.com/TheEasyShift/easyshift/config"
+	"github.com/TheEasyShift/easyshift/interfaces"
+	"github.com/TheEasyShift/easyshift/providers/fakes"
 )
 
 func newStageContext(t *testing.T, c *config.ClusterConfig) *interfaces.StageContext {

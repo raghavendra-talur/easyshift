@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/raghavendra-talur/easyshift/interfaces"
+	"github.com/TheEasyShift/easyshift/interfaces"
 )
 
 // CommandCall records a single CommandRunner invocation.

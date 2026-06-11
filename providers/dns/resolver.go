@@ -6,7 +6,7 @@ import (
 	"net"
 	"strings"
 
-	"github.com/raghavendra-talur/easyshift/interfaces"
+	"github.com/TheEasyShift/easyshift/interfaces"
 )
 
 // DigDNSResolver is the real DNSResolver, shelling out to `dig +short`.
