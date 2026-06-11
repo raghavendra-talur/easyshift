@@ -1,4 +1,4 @@
-SOURCE := cmd/easyshift/main.go
+SOURCE := ./cmd/easyshift
 MK_SOURCE := Makefile
 TARGET := easyshift
 

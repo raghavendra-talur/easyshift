@@ -20,7 +20,7 @@ func EnsurePullSecret(configDir string) error {
 	path := PullSecretPath(configDir)
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("pull secret not configured: run `easyshift pull-secret set <file>` first (expected at %s)", path)
+			return fmt.Errorf("pull secret not configured: run `easyshift pull-secret login` (or `easyshift pull-secret set <file>`) first (expected at %s)", path)
 		}
 		return fmt.Errorf("stat pull secret %s: %w", path, err)
 	}

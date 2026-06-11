@@ -101,14 +101,14 @@ It provides a simple interface for cluster lifecycle management.`,
 			"Uses a throwaway config dir; prints a trace of every operation the real run would have performed.")
 
 	rootCmd.AddCommand(
-		newCreateCommand(&mgr, &simBundle),
+		newCreateCommand(&mgr, &simBundle, &cfg, &deps),
 		newStartCommand(&mgr),
 		newStopCommand(&mgr),
 		newDeleteCommand(&mgr),
 		newListCommand(&mgr),
 		newStatusCommand(&mgr),
 		newNATNetworkCommand(&mgr),
-		newPullSecretCommand(cfg),
+		newPullSecretCommand(&cfg, &deps),
 		newDNSCommand(cfg),
 	)
 
@@ -117,7 +117,7 @@ It provides a simple interface for cluster lifecycle management.`,
 	}
 }
 
-func newCreateCommand(mgr **app.ClusterManager, simBundle **fakes.Bundle) *cobra.Command {
+func newCreateCommand(mgr **app.ClusterManager, simBundle **fakes.Bundle, cfgp **config.Config, depsp *interfaces.Deps) *cobra.Command {
 	var (
 		name        string
 		baseDomain  string
@@ -173,6 +173,9 @@ func newCreateCommand(mgr **app.ClusterManager, simBundle **fakes.Bundle) *cobra
 			// would poll the fake host until it times out.
 			if simBundle != nil && *simBundle != nil && c.NetworkMode == config.NetworkModeBridge {
 				(*simBundle).Host.ARPTable = map[string]string{c.MasterMAC: c.MasterIP}
+			}
+			if err := ensurePullSecret(context.Background(), *cfgp, depsp.PullSecret, os.Stdin, os.Stdout, stdinIsTTY()); err != nil {
+				return err
 			}
 			return (*mgr).Create(context.Background(), c)
 		},
@@ -337,7 +340,7 @@ func newNATNetworkCommand(mgr **app.ClusterManager) *cobra.Command {
 	return cmd
 }
 
-func newPullSecretCommand(cfg *config.Config) *cobra.Command {
+func newPullSecretCommand(cfgp **config.Config, depsp *interfaces.Deps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pull-secret",
 		Short: "Manage the OpenShift pull secret used for cluster installs",
@@ -357,10 +360,10 @@ func newPullSecretCommand(cfg *config.Config) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("read pull secret source: %w", err)
 			}
-			if err := config.WritePullSecret(cfg.ConfigDir, data); err != nil {
+			if err := config.WritePullSecret((*cfgp).ConfigDir, data); err != nil {
 				return err
 			}
-			fmt.Printf("pull secret stored at %s\n", config.PullSecretPath(cfg.ConfigDir))
+			fmt.Printf("pull secret stored at %s\n", config.PullSecretPath((*cfgp).ConfigDir))
 			return nil
 		},
 	})
@@ -369,11 +372,19 @@ func newPullSecretCommand(cfg *config.Config) *cobra.Command {
 		Short: "Print the path of the persisted pull secret",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if err := config.EnsurePullSecret(cfg.ConfigDir); err != nil {
+			if err := config.EnsurePullSecret((*cfgp).ConfigDir); err != nil {
 				return err
 			}
-			fmt.Println(config.PullSecretPath(cfg.ConfigDir))
+			fmt.Println(config.PullSecretPath((*cfgp).ConfigDir))
 			return nil
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "login",
+		Short: "Fetch the pull secret from your Red Hat account (device-code login)",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return fetchAndStorePullSecret(context.Background(), *cfgp, depsp.PullSecret, os.Stdout)
 		},
 	})
 	return cmd
