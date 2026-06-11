@@ -35,6 +35,3 @@ go.work.sum
 cloudflare-token
 pull-secret
 pull-secret*.txt
-
-# Local reference material
-yakko-deep-dive.html
