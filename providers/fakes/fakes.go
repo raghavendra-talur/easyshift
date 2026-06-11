@@ -663,6 +663,38 @@ func (r *DNSResolver) Resolve(_ context.Context, name string) ([]string, error) 
 	return r.Records[name], nil
 }
 
+// PullSecretFetcher is a fake interfaces.PullSecretFetcher. It hands back a
+// canned prompt and a syntactically valid pull secret unless errors are set.
+type PullSecretFetcher struct {
+	StartErr error
+	FetchErr error
+	// Secret overrides the default fake pull secret returned by WaitAndFetch.
+	Secret      []byte
+	StartCalled bool
+	FetchCalled bool
+}
+
+// StartDeviceAuth records the call and returns a canned prompt or StartErr.
+func (p *PullSecretFetcher) StartDeviceAuth(_ context.Context) (interfaces.DeviceAuthPrompt, error) {
+	p.StartCalled = true
+	if p.StartErr != nil {
+		return interfaces.DeviceAuthPrompt{}, p.StartErr
+	}
+	return interfaces.DeviceAuthPrompt{VerificationURI: "https://fake.sso.example/device", UserCode: "FAKE-CODE"}, nil
+}
+
+// WaitAndFetch records the call and returns Secret (or a valid stand-in) or FetchErr.
+func (p *PullSecretFetcher) WaitAndFetch(_ context.Context) ([]byte, error) {
+	p.FetchCalled = true
+	if p.FetchErr != nil {
+		return nil, p.FetchErr
+	}
+	if len(p.Secret) == 0 {
+		return []byte(`{"auths":{"fake.registry":{"auth":"ZmFrZQ=="}}}`), nil
+	}
+	return p.Secret, nil
+}
+
 // All returns a Deps wired with one fresh fake per interface, ready for tests
 // that want a vanilla happy-path environment.
 func All() (interfaces.Deps, *Bundle) {
@@ -679,6 +711,7 @@ func All() (interfaces.Deps, *Bundle) {
 		DNS:        &DNSResolver{},
 		DNSManager: &DNSManager{},
 		CertIssuer: &CertIssuer{},
+		PullSecret: &PullSecretFetcher{},
 	}
 	return interfaces.Deps{
 		Cmd:        b.Cmd,
@@ -692,6 +725,7 @@ func All() (interfaces.Deps, *Bundle) {
 		Host:       b.Host,
 		DNS:        b.DNS,
 		DNSManager: b.DNSManager,
+		PullSecret: b.PullSecret,
 		NewCertIssuer: func(opts interfaces.CertIssuerOpts) (interfaces.CertIssuer, error) {
 			b.CertIssuer.recordOpts(opts)
 			return b.CertIssuer, nil
@@ -826,4 +860,5 @@ type Bundle struct {
 	DNS        *DNSResolver
 	DNSManager *DNSManager
 	CertIssuer *CertIssuer
+	PullSecret *PullSecretFetcher
 }

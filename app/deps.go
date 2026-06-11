@@ -15,6 +15,7 @@ import (
 	"github.com/TheEasyShift/easyshift/providers/host"
 	"github.com/TheEasyShift/easyshift/providers/libvirt"
 	"github.com/TheEasyShift/easyshift/providers/openshift"
+	"github.com/TheEasyShift/easyshift/providers/redhat"
 	"github.com/TheEasyShift/easyshift/providers/tls"
 )
 
@@ -43,6 +44,7 @@ func NewProductionDeps(cfg *config.Config, hostIP string) (interfaces.Deps, erro
 		Host:       host.NewSystemHostInspector(),
 		DNS:        dns.NewDigDNSResolver(cmd),
 		DNSManager: newProductionDNSManager(cfg),
+		PullSecret: redhat.NewFetcher(redhat.DefaultSSORealmURL, redhat.DefaultAPIURL),
 		NewCertIssuer: func(opts interfaces.CertIssuerOpts) (interfaces.CertIssuer, error) {
 			return tls.NewIssuer(opts)
 		},
