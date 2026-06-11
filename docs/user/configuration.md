@@ -44,11 +44,22 @@ state for you.
 Required before any `create`. Stored once at `~/.config/easyshift/pull-secret`
 (mode `0600`); it is **not** kept in `config.json`.
 
+The easiest path is a device-code login: easyshift prints a short code and a
+Red Hat URL; you authorize from any browser (e.g. your laptop — handy when
+easyshift runs on a headless box) and the pull secret is fetched and stored
+automatically. `create` offers this interactively when no pull secret is
+configured. No SSO token is persisted — only the pull secret itself.
+
 ```sh
+easyshift pull-secret login                             # fetch via Red Hat account login
 easyshift pull-secret set ~/Downloads/pull-secret.txt   # from a file
 easyshift pull-secret set -                             # from stdin
 easyshift pull-secret show                              # print the stored path
 ```
+
+The manual `set` path (download from
+<https://console.redhat.com/openshift/install/pull-secret>) remains for
+air-gapped hosts or if the Red Hat SSO flow is unavailable.
 
 ## DNS provider credentials
 

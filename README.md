@@ -21,7 +21,7 @@ Requirements:
 | Linux host with KVM | CPU virtualization enabled (`vmx`/`svm`) |
 | libvirt (`qemu:///system`) | `virsh` and `virt-install` on `PATH`; libvirt-group membership is enough — root is not required |
 | CLI tools | `ssh-keygen`, `tar`, `dig` on `PATH` |
-| OpenShift pull secret | From <https://console.redhat.com/openshift/install/pull-secret> |
+| OpenShift pull secret | Fetched via `easyshift pull-secret login` (or download from <https://console.redhat.com/openshift/install/pull-secret>) |
 
 ## Install
 
@@ -38,8 +38,9 @@ For prerequisites, building, and first-run setup in detail, see
 ## Quickstart
 
 ```sh
-# 1. Store your pull secret once.
-easyshift pull-secret set ~/Downloads/pull-secret.txt
+# 1. Store your pull secret once (log in to your Red Hat account; or use
+#    `easyshift pull-secret set <file>` with a downloaded secret).
+easyshift pull-secret login
 
 # 2. Create a zero-config NAT cluster (magic DNS, no records to manage).
 easyshift create --name demo
