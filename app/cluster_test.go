@@ -64,6 +64,10 @@ func withDNSRecords(bundle *fakes.Bundle, c *config.ClusterConfig) {
 
 func newTestEnv(t *testing.T) (*config.Config, interfaces.Deps, *fakes.Bundle) {
 	t.Helper()
+	// Guard against the merge-kubeconfig stage writing to the developer's real
+	// ~/.kube/config: redirect KUBECONFIG to a throwaway path for every test
+	// that invokes Create or Delete.
+	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "kubeconfig"))
 	cfg := config.NewDefaultConfig(filepath.Join(t.TempDir(), "easyshift"))
 	if err := config.MkdirAllForTest(cfg.ConfigDir); err != nil {
 		t.Fatalf("setup config dir: %v", err)
@@ -167,6 +171,7 @@ func TestCreateCluster_HappyPath(t *testing.T) {
 		"upsert-dns",
 		"wait-for-install",
 		"apply-tls-certs",
+		"merge-kubeconfig",
 		"finalize",
 	}
 	if got, want := len(state.Stages), len(wantStages); got != want {

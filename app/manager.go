@@ -27,6 +27,7 @@ import (
 	"github.com/TheEasyShift/easyshift/stages/finalize"
 	"github.com/TheEasyShift/easyshift/stages/generateignition"
 	"github.com/TheEasyShift/easyshift/stages/generatesshkey"
+	"github.com/TheEasyShift/easyshift/stages/mergekubeconfig"
 	"github.com/TheEasyShift/easyshift/stages/registercluster"
 	"github.com/TheEasyShift/easyshift/stages/upsertdns"
 	"github.com/TheEasyShift/easyshift/stages/verifymasterip"
@@ -75,6 +76,7 @@ func (cm *ClusterManager) buildStages() []interfaces.Stage {
 		verifymasterip.New(d.Host),
 		waitforinstall.New(d.Installer, d.CSR, d.Hostname, d.VM),
 		applytlscerts.New(d.NewCertIssuer, d.NewLocalCertIssuer, d.Cmd),
+		mergekubeconfig.New(d.Cmd),
 		finalize.New(),
 	}
 }

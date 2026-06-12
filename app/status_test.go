@@ -17,12 +17,15 @@ func TestStatus_BridgeMode_AllGreen(t *testing.T) {
 	c := newBridgeModeCluster("good", "br0")
 	withDNSRecords(bundle, c)
 	bundle.Host.ARPTable = map[string]string{c.MasterMAC: c.MasterIP}
-	bundle.Cmd.Output = []byte("running\n") // virsh domstate -> running
 
 	mgr := app.NewClusterManager(cfg, deps)
 	if err := mgr.Create(context.Background(), c); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
+	// Set after Create so that merge-kubeconfig's jsonpath calls during Create
+	// see the default empty output (valid for base64 decode) while Status's
+	// virsh domstate call sees the "running" response.
+	bundle.Cmd.Output = []byte("running\n") // virsh domstate -> running
 
 	rep, err := mgr.Status(context.Background(), "good")
 	if err != nil {
