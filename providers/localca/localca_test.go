@@ -6,6 +6,7 @@ import (
 	"encoding/pem"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -129,5 +130,29 @@ func TestEnsureCA_GeneratesWithoutIssuing(t *testing.T) {
 	again, err := EnsureCA(dir)
 	if err != nil || again != path {
 		t.Errorf("EnsureCA not idempotent: %q %v", again, err)
+	}
+}
+
+func TestIssue_RejectsMismatchedCAPair(t *testing.T) {
+	dirA := filepath.Join(t.TempDir(), "a")
+	dirB := filepath.Join(t.TempDir(), "b")
+	if _, err := EnsureCA(dirA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureCA(dirB); err != nil {
+		t.Fatal(err)
+	}
+	// Cross the streams: dirA's cert with dirB's key.
+	key, err := os.ReadFile(filepath.Join(dirB, "ca.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dirA, "ca.key"), key, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = New(dirA).Issue(context.Background(), []string{"api.x.test"})
+	if err == nil || !strings.Contains(err.Error(), "cert/key mismatch") {
+		t.Errorf("want cert/key mismatch error, got %v", err)
 	}
 }

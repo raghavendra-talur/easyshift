@@ -120,6 +120,9 @@ func loadOrCreateCA(dir string) (*x509.Certificate, *ecdsa.PrivateKey, error) {
 		if !ok {
 			return nil, nil, fmt.Errorf("local CA key is not ECDSA")
 		}
+		if !key.PublicKey.Equal(cert.PublicKey) {
+			return nil, nil, fmt.Errorf("corrupt local CA in %s (cert/key mismatch; remove ca.crt and ca.key to regenerate)", dir)
+		}
 		return cert, key, nil
 	}
 
