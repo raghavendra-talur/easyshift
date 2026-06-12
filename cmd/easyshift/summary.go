@@ -16,10 +16,11 @@ import (
 func printCreateSummary(w io.Writer, cfg *config.Config, c *config.ClusterConfig) {
 	fqdn := c.FQDN()
 	fmt.Fprintf(w, "\nCluster %s is ready.\n", c.Name)
-	fmt.Fprintf(w, "  kubectl/oc: context %q is merged into your kubeconfig and set as current\n", c.Name)
+	fmt.Fprintf(w, "  kubectl/oc: context %q is in your kubeconfig (current context)\n", c.Name)
 	fmt.Fprintf(w, "  console:    https://console-openshift-console.apps.%s\n", fqdn)
 	fmt.Fprintf(w, "  kubeadmin:  password file %s\n",
 		filepath.Join(config.ClusterDir(cfg.ConfigDir, c.Name), "auth", "kubeadmin-password"))
+	fmt.Fprintf(w, "  note:       the API may flap for a few minutes while the apiserver rolls out its serving cert\n")
 	if c.TLSEmail == "" {
 		if _, err := os.Stat(config.LocalCATrustedMarkerPath(cfg.ConfigDir)); err != nil {
 			fmt.Fprintf(w, "  tip:        run `easyshift trust` once to remove browser TLS warnings (uses sudo)\n")

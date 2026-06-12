@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -48,5 +49,18 @@ func TestRunTrust_Uninstall(t *testing.T) {
 	}
 	if _, err := os.Stat(config.LocalCATrustedMarkerPath(cfg.ConfigDir)); !os.IsNotExist(err) {
 		t.Error("marker should be removed on uninstall")
+	}
+}
+
+func TestRunTrust_InstallErrorWritesNoMarker(t *testing.T) {
+	cfg := config.NewDefaultConfig(t.TempDir())
+	ts := &fakes.TrustStore{Err: errors.New("sudo denied")}
+	var out bytes.Buffer
+
+	if err := runTrust(context.Background(), cfg, ts, false, &out); err == nil {
+		t.Fatal("runTrust should fail when Install fails")
+	}
+	if _, err := os.Stat(config.LocalCATrustedMarkerPath(cfg.ConfigDir)); !os.IsNotExist(err) {
+		t.Error("marker must not be written when Install fails")
 	}
 }
