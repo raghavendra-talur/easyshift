@@ -59,6 +59,7 @@ func (s *Stage) Apply(ctx context.Context, sc *interfaces.StageContext) error {
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fmt.Errorf("create kubeconfig dir: %w", err)
 	}
+	sc.Cluster.KubeconfigTarget = target
 
 	oc := sc.OCBinaryPath()
 	admin := sc.KubeconfigPath()
@@ -80,6 +81,11 @@ func (s *Stage) Apply(ctx context.Context, sc *interfaces.StageContext) error {
 	keyData, err := s.jsonpath(ctx, oc, admin, "{.users[0].user.client-key-data}")
 	if err != nil {
 		return err
+	}
+
+	if certData == "" || keyData == "" {
+		logrus.Warnf("merge-kubeconfig: admin kubeconfig %s has no embedded client cert/key; "+
+			"the merged context may not authenticate", admin)
 	}
 
 	if err := os.MkdirAll(authDir, 0o700); err != nil {
@@ -125,10 +131,14 @@ func (s *Stage) Apply(ctx context.Context, sc *interfaces.StageContext) error {
 // unsets current-context only if it still points at our context. Best
 // effort by design: a missing kubeconfig or entry must not block delete.
 func (s *Stage) Rollback(ctx context.Context, sc *interfaces.StageContext) error {
-	target, err := targetKubeconfig()
-	if err != nil {
-		logrus.Warnf("merge-kubeconfig rollback: %v", err)
-		return nil
+	target := sc.Cluster.KubeconfigTarget
+	if target == "" {
+		var err error
+		target, err = targetKubeconfig()
+		if err != nil {
+			logrus.Warnf("merge-kubeconfig rollback: %v", err)
+			return nil
+		}
 	}
 	oc := sc.OCBinaryPath()
 	name := sc.Cluster.Name
@@ -145,7 +155,7 @@ func (s *Stage) Rollback(ctx context.Context, sc *interfaces.StageContext) error
 		{"--kubeconfig", target, "config", "unset", "users." + userEntry(name)},
 	} {
 		if _, err := s.cmd.Run(ctx, oc, args...); err != nil {
-			logrus.Debugf("merge-kubeconfig rollback: oc %v: %v", args, err)
+			logrus.Warnf("merge-kubeconfig rollback: oc %v: %v", args, err)
 		}
 	}
 	return nil

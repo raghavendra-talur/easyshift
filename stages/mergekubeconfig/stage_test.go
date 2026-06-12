@@ -70,6 +70,8 @@ func TestApply_MergesContextAndSetsCurrent(t *testing.T) {
 	calls := joined(cmd)
 	wants := []string{
 		"--kubeconfig " + target + " config set-cluster easyshift-dr1 --server=https://api.dr1.example.test:6443",
+		"--certificate-authority=",
+		"--embed-certs=true",
 		"config set-credentials easyshift-dr1-admin",
 		"config set-context dr1 --cluster=easyshift-dr1 --user=easyshift-dr1-admin",
 		"config use-context dr1",
@@ -89,6 +91,11 @@ func TestApply_MergesContextAndSetsCurrent(t *testing.T) {
 	// Target parent dir created.
 	if _, err := os.Stat(filepath.Dir(target)); err != nil {
 		t.Errorf("target dir not created: %v", err)
+	}
+
+	// KubeconfigTarget must be recorded on the cluster for rollback.
+	if sc.Cluster.KubeconfigTarget != target {
+		t.Errorf("KubeconfigTarget: got %q, want %q", sc.Cluster.KubeconfigTarget, target)
 	}
 }
 
@@ -136,6 +143,51 @@ func TestRollback_KeepsForeignCurrentContext(t *testing.T) {
 	for _, c := range joined(cmd) {
 		if strings.Contains(c, "unset current-context") {
 			t.Errorf("must not unset a current-context easyshift doesn't own: %v", c)
+		}
+	}
+}
+
+func TestRollback_UsesRecordedTarget(t *testing.T) {
+	s, sc, cmd, _ := newEnv(t)
+	recorded := filepath.Join(t.TempDir(), "recorded-kubeconfig")
+	sc.Cluster.KubeconfigTarget = recorded
+	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "wrong-kubeconfig"))
+
+	if err := s.Rollback(context.Background(), sc); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	for _, c := range joined(cmd) {
+		if strings.Contains(c, "wrong-kubeconfig") {
+			t.Errorf("rollback must use the recorded target, got %v", c)
+		}
+	}
+	found := false
+	for _, c := range joined(cmd) {
+		if strings.Contains(c, recorded) {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("rollback never touched the recorded target")
+	}
+}
+
+func TestApply_NoCAFlagsWhenBundleAbsent(t *testing.T) {
+	s, sc, cmd, _ := newEnv(t)
+	inner := cmd.RunFunc
+	cmd.RunFunc = func(name string, args []string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "certificate-authority-data") {
+			return nil, nil // LE cluster: CA stripped from admin kubeconfig
+		}
+		return inner(name, args)
+	}
+
+	if err := s.Apply(context.Background(), sc); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	for _, c := range joined(cmd) {
+		if strings.Contains(c, "set-cluster") && strings.Contains(c, "--certificate-authority") {
+			t.Errorf("no CA flags expected when bundle absent: %v", c)
 		}
 	}
 }
