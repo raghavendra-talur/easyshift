@@ -110,6 +110,7 @@ It provides a simple interface for cluster lifecycle management.`,
 		newNATNetworkCommand(&mgr),
 		newPullSecretCommand(&cfg, &deps),
 		newDNSCommand(cfg),
+		newTrustCommand(&cfg, &deps),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -441,6 +442,24 @@ func newDNSCommand(cfg *config.Config) *cobra.Command {
 			return nil
 		},
 	})
+	return cmd
+}
+
+func newTrustCommand(cfgp **config.Config, depsp *interfaces.Deps) *cobra.Command {
+	var uninstall bool
+	cmd := &cobra.Command{
+		Use:   "trust",
+		Short: "Install the easyshift local CA into the host trust stores (uses sudo)",
+		Long: "Installs the easyshift local CA — which signs the api/apps certificates of every\n" +
+			"cluster created without --tls-email — into the system trust store (via sudo) and,\n" +
+			"when certutil is available, the NSS databases used by Firefox and Chrome.\n" +
+			"One-time per host; reversible with --uninstall.",
+		Args: cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return runTrust(context.Background(), *cfgp, depsp.TrustStore, uninstall, os.Stdout)
+		},
+	}
+	cmd.Flags().BoolVar(&uninstall, "uninstall", false, "Remove the easyshift local CA from the host trust stores")
 	return cmd
 }
 
