@@ -151,7 +151,12 @@ func (cm *ClusterManager) Start(ctx context.Context, name string) error {
 		}
 	}
 	c.State = config.ClusterStateRunning
-	return cm.cfg.Save()
+	if err := cm.cfg.Save(); err != nil {
+		return err
+	}
+	// Convergence failure does not unmark running: the VMs are up and a
+	// slow cluster may still recover; status stays accurate either way.
+	return cm.convergeAfterStart(ctx, c)
 }
 
 // Stop shuts down all nodes for a running cluster.

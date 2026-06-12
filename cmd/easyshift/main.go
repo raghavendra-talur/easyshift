@@ -245,7 +245,11 @@ func newStartCommand(mgr **app.ClusterManager) *cobra.Command {
 		Short: "Start a cluster",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return (*mgr).Start(context.Background(), args[0])
+			if err := (*mgr).Start(context.Background(), args[0]); err != nil {
+				return err
+			}
+			fmt.Printf("cluster %s started: API up, node Ready, CSRs approved\n", args[0])
+			return nil
 		},
 	}
 }

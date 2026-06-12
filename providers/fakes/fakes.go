@@ -64,6 +64,16 @@ func (c *CommandRunner) Run(_ context.Context, name string, args ...string) ([]b
 	if c.RunFunc != nil {
 		return c.RunFunc(name, args)
 	}
+	// Default node-Ready answer so simulate/full-pipeline tests converge
+	// instantly (same spirit as the ssh-keygen side effect above). Tests that
+	// need an un-Ready node set RunFunc.
+	if len(c.Output) == 0 && c.Err == nil {
+		for _, a := range args {
+			if strings.Contains(a, `?(@.type=="Ready")`) {
+				return []byte("True"), nil
+			}
+		}
+	}
 	return c.Output, c.Err
 }
 
