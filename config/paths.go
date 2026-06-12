@@ -94,6 +94,25 @@ func ACMEAccountDir(configDir, provider string, staging bool) string {
 	return filepath.Join(configDir, "acme", provider, env)
 }
 
+// LocalCADir is the on-disk home of the host-local easyshift CA that signs
+// api/apps serving certs for clusters without Let's Encrypt. Like the ACME
+// account dir it is shared by all clusters and outlives any one of them.
+func LocalCADir(configDir string) string {
+	return filepath.Join(configDir, "ca")
+}
+
+// LocalCACertPath is the CA certificate inside LocalCADir. The file name must
+// stay in sync with providers/localca, which owns generation.
+func LocalCACertPath(configDir string) string {
+	return filepath.Join(LocalCADir(configDir), "ca.crt")
+}
+
+// LocalCATrustedMarkerPath marks that `easyshift trust` succeeded on this
+// host. It only drives the end-of-create hint; it is not a security control.
+func LocalCATrustedMarkerPath(configDir string) string {
+	return filepath.Join(LocalCADir(configDir), "trusted")
+}
+
 // ValidatePullSecretJSON parses the persisted pull secret and verifies it is
 // JSON with the required "auths" key. Run as a preflight so a malformed
 // secret fails fast instead of mid-install.
