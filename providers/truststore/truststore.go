@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/sirupsen/logrus"
 
@@ -21,7 +22,10 @@ import (
 )
 
 const (
-	anchorName  = "easyshift-local-ca.crt"
+	anchorName = "easyshift-local-ca.crt"
+	// nssNickname is the label used for NSS database entries and the macOS
+	// keychain CN match. Must equal providers/localca's caCommonName: darwin
+	// uninstall matches the keychain entry by CN.
 	nssNickname = "easyshift local CA"
 
 	fedoraAnchors = "/etc/pki/ca-trust/source/anchors"
@@ -70,9 +74,20 @@ func (t *Installer) Install(ctx context.Context, caCertPath string) error {
 func (t *Installer) Uninstall(ctx context.Context, caCertPath string) error {
 	switch t.goos {
 	case "darwin":
-		if _, err := t.cmd.Run(ctx, "sudo", "security", "delete-certificate", "-c", nssNickname,
+		// remove-trusted-cert undoes the admin trust settings that
+		// add-trusted-cert -d wrote; delete-certificate then removes the cert
+		// itself. "not found" outputs are tolerated so uninstall stays
+		// idempotent; anything else (e.g. sudo denied) propagates.
+		if out, err := t.cmd.Run(ctx, "sudo", "security", "remove-trusted-cert", "-d", caCertPath); err != nil {
+			if !strings.Contains(string(out), "could not be found") {
+				return fmt.Errorf("remove trust settings: %w", err)
+			}
+		}
+		if out, err := t.cmd.Run(ctx, "sudo", "security", "delete-certificate", "-c", nssNickname,
 			"/Library/Keychains/System.keychain"); err != nil {
-			logrus.Warnf("remove CA from system keychain: %v", err)
+			if !strings.Contains(string(out), "Unable to delete certificate") {
+				logrus.Warnf("remove CA from system keychain: %v", err)
+			}
 		}
 	default:
 		switch {
@@ -96,7 +111,6 @@ func (t *Installer) Uninstall(ctx context.Context, caCertPath string) error {
 		_, err := t.cmd.Run(ctx, "certutil", "-D", "-d", "sql:"+dir, "-n", nssNickname)
 		return err
 	})
-	_ = caCertPath
 	return nil
 }
 
@@ -128,8 +142,13 @@ func (t *Installer) installSystem(ctx context.Context, caCertPath string) error 
 // databases are user-owned). Missing certutil downgrades to an info message.
 func (t *Installer) eachNSSDB(ctx context.Context, fn func(dir string) error) {
 	if _, err := t.lookPath("certutil"); err != nil {
-		logrus.Info("certutil not found; Firefox/Chrome may still warn about the console. " +
-			"Install nss-tools (Fedora) or libnss3-tools (Debian) and re-run `easyshift trust`.")
+		logrus.Info("certutil not found; browsers may still warn about the cluster console. " +
+			"Install nss-tools (Fedora), libnss3-tools (Debian/Ubuntu), or `brew install nss` (macOS), " +
+			"then re-run `easyshift trust`.")
+		return
+	}
+	if t.home == "" {
+		logrus.Debug("home directory unknown; skipping NSS database update")
 		return
 	}
 	var dirs []string
@@ -138,6 +157,9 @@ func (t *Installer) eachNSSDB(ctx context.Context, fn func(dir string) error) {
 	}
 	for _, glob := range []string{
 		filepath.Join(t.home, ".mozilla", "firefox", "*"),
+		// Ubuntu ships Firefox as a snap since 22.04; flatpak is common elsewhere.
+		filepath.Join(t.home, "snap", "firefox", "common", ".mozilla", "firefox", "*"),
+		filepath.Join(t.home, ".var", "app", "org.mozilla.firefox", ".mozilla", "firefox", "*"),
 		filepath.Join(t.home, "Library", "Application Support", "Firefox", "Profiles", "*"),
 	} {
 		matches, _ := filepath.Glob(glob)
