@@ -11,6 +11,7 @@ The docs are split by who you are.
 | [usage.md](user/usage.md) | Command reference and the cluster lifecycle |
 | [networking.md](user/networking.md) | NAT vs bridge mode, magic DNS, the multi-cluster (DR) story |
 | [dns-and-tls.md](user/dns-and-tls.md) | Automated DNS records and Let's Encrypt TLS |
+| [access.md](user/access.md) | Accessing your cluster — kubeconfig contexts, console login, `easyshift trust`, TLS |
 | [troubleshooting.md](user/troubleshooting.md) | Logs, the `status` command, common failure modes |
 
 A good reading order: **installation → configuration → usage**, then

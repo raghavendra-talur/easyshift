@@ -83,8 +83,9 @@ In `buildStages` order:
 | 11 | `createmastervms` | Creates the master VM(s) booting from the ISO. | `VM`, `Host` |
 | 12 | `verifymasterip` | Bridge mode only: safety net that aborts fast if the booted node didn't come up on its IP (e.g. a LAN address conflict). The static keyfile from `embedignitioniso` is the primary defense; this catches the residual cases. No-op in NAT. | `Host` |
 | 13 | `waitforinstall` | Waits for install-complete; approves CSRs; injects hostname. | `Installer`, `CSR`, `Hostname`, `VM` |
-| 14 | `applytlscerts` | Issues + applies Let's Encrypt certs (if `--tls-email`), then rewrites the admin kubeconfig to trust the public cert. | `NewCertIssuer`, `Cmd` |
-| 15 | `finalize` | Marks the cluster running. | — |
+| 14 | `applytlscerts` | Always runs. Issues + applies api/apps serving certs: Let's Encrypt (ACME DNS-01) when `TLSEmail` is set, the host-local easyshift CA otherwise. For the local-CA path, appends the CA to the admin kubeconfig bundle instead of stripping it (the internal CA stays valid during the apiserver rollout). | `NewCertIssuer`, `NewLocalCertIssuer`, `Cmd` |
+| 15 | `mergekubeconfig` | Merges an admin context (named after the cluster, `easyshift-` prefixed cluster/user entries) into the user's kubeconfig via `oc config set-*` and sets current-context. Rollback removes exactly those entries from the same file and resets current-context only if it still points at the cluster. | `Cmd` |
+| 16 | `finalize` | Marks the cluster running. | — |
 
 Preflight checks live on the stages that own the relevant precondition — e.g.
 `createmastervms` preflights libvirt reachability, storage pool, CPU
