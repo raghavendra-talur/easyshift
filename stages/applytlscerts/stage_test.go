@@ -147,6 +147,15 @@ func TestApply_UsesLocalCAWhenNoTLSEmail(t *testing.T) {
 			t.Errorf("missing oc call %q in:\n%s", want, joined)
 		}
 	}
+
+	// Append failure (no ca.crt on disk — the fake issuer writes nothing) is
+	// warn-only by design, and a retried Apply must succeed end-to-end.
+	if err := s.Apply(context.Background(), sc); err != nil {
+		t.Fatalf("second Apply (retry) should succeed: %v", err)
+	}
+	if len(local.Issued) != 4 {
+		t.Errorf("retry should re-issue both certs: got %d issuances", len(local.Issued))
+	}
 }
 
 // --- kubeconfig CA append ------------------------------------------------
@@ -203,6 +212,33 @@ func TestAppendLocalCA_AppendsAndBacksUp(t *testing.T) {
 	wantBundle := base64.StdEncoding.EncodeToString([]byte(otherCertPEM + fakeCAPEM))
 	if got := setCall[len(setCall)-1]; got != wantBundle {
 		t.Errorf("set bundle = %q, want old+ours = %q", got, wantBundle)
+	}
+}
+
+// TestAppendLocalCA_ErrorsOnMissingBundle: an empty jsonpath result (entry
+// name mismatch or already-stripped CA) must error rather than create a
+// stub cluster entry via `oc config set`.
+func TestAppendLocalCA_ErrorsOnMissingBundle(t *testing.T) {
+	dir := t.TempDir()
+	kc := filepath.Join(dir, "kubeconfig")
+	if err := os.WriteFile(kc, []byte(sampleKubeconfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	caPath := filepath.Join(dir, "ca.crt")
+	if err := os.WriteFile(caPath, []byte(fakeCAPEM), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := &fakes.CommandRunner{} // empty output for config view
+	s := &Stage{cmd: cmd}
+
+	err := s.appendLocalCAToKubeconfig(context.Background(), "/usr/bin/oc", kc, "dr1", caPath)
+	if err == nil || !strings.Contains(err.Error(), "no certificate-authority-data") {
+		t.Fatalf("want missing-bundle error, got %v", err)
+	}
+	for _, call := range cmd.Calls {
+		if strings.Contains(strings.Join(call.Args, " "), "config set ") {
+			t.Errorf("must not run config set on a missing bundle: %v", call.Args)
+		}
 	}
 }
 

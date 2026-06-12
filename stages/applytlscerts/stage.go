@@ -137,8 +137,8 @@ func (s *Stage) Apply(ctx context.Context, sc *interfaces.StageContext) error {
 		caPath := config.LocalCACertPath(sc.Config.ConfigDir)
 		if err := s.appendLocalCAToKubeconfig(ctx, oc, kubeconfig, sc.Cluster.Name, caPath); err != nil {
 			logrus.Warnf("apply-tls-certs: could not add the easyshift CA to %s "+
-				"(oc may report certificate errors; the original is at %s.internal-ca): %v",
-				kubeconfig, kubeconfig, err)
+				"(oc may report certificate errors for api.%s): %v",
+				kubeconfig, sc.Cluster.FQDN(), err)
 		}
 	}
 	return nil
@@ -193,7 +193,11 @@ func (s *Stage) appendLocalCAToKubeconfig(ctx context.Context, oc, kubeconfig, c
 	if err != nil {
 		return fmt.Errorf("read kubeconfig CA bundle: %w", err)
 	}
-	bundle, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(out)))
+	b64bundle := strings.TrimSpace(string(out))
+	if b64bundle == "" {
+		return fmt.Errorf("no certificate-authority-data found for cluster entry %q in %s", clusterEntry, kubeconfig)
+	}
+	bundle, err := base64.StdEncoding.DecodeString(b64bundle)
 	if err != nil {
 		return fmt.Errorf("decode kubeconfig CA bundle: %w", err)
 	}
@@ -219,7 +223,10 @@ func (s *Stage) appendLocalCAToKubeconfig(ctx context.Context, oc, kubeconfig, c
 		}
 	}
 
-	newBundle := append(append([]byte{}, bundle...), caPEM...)
+	if len(bundle) > 0 && bundle[len(bundle)-1] != '\n' {
+		bundle = append(bundle, '\n')
+	}
+	newBundle := append(append([]byte{}, bundle...), pem.EncodeToMemory(caBlock)...)
 	if _, err := s.cmd.Run(ctx, oc, "--kubeconfig", kubeconfig, "config", "set",
 		"clusters."+clusterEntry+".certificate-authority-data",
 		base64.StdEncoding.EncodeToString(newBundle)); err != nil {
