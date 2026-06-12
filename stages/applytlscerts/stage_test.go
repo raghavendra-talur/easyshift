@@ -3,6 +3,7 @@ package applytlscerts
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -105,8 +106,21 @@ func newLocalStageEnv(t *testing.T) (*Stage, *interfaces.StageContext, *fakes.Ce
 		t.Fatal(err)
 	}
 
+	if err := os.MkdirAll(config.LocalCADir(tmp), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config.LocalCACertPath(tmp), []byte(fakeCAPEM), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	local := &fakes.CertIssuer{}
 	cmd := &fakes.CommandRunner{}
+	cmd.RunFunc = func(_ string, args []string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "config view") {
+			return []byte(base64.StdEncoding.EncodeToString([]byte(otherCertPEM))), nil
+		}
+		return nil, nil
+	}
 	s := New(
 		func(_ interfaces.CertIssuerOpts) (interfaces.CertIssuer, error) {
 			t.Fatal("ACME issuer must not be constructed when TLSEmail is empty")
@@ -142,14 +156,15 @@ func TestApply_UsesLocalCAWhenNoTLSEmail(t *testing.T) {
 	for _, want := range []string{
 		"patch apiserver/cluster",
 		"patch ingresscontroller/default",
+		"config set clusters.dr1.certificate-authority-data",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing oc call %q in:\n%s", want, joined)
 		}
 	}
 
-	// Append failure (no ca.crt on disk — the fake issuer writes nothing) is
-	// warn-only by design, and a retried Apply must succeed end-to-end.
+	// The CA append succeeds (kubeconfig and CA cert both exist). A retried
+	// Apply must also succeed end-to-end.
 	if err := s.Apply(context.Background(), sc); err != nil {
 		t.Fatalf("second Apply (retry) should succeed: %v", err)
 	}
@@ -239,6 +254,26 @@ func TestAppendLocalCA_ErrorsOnMissingBundle(t *testing.T) {
 		if strings.Contains(strings.Join(call.Args, " "), "config set ") {
 			t.Errorf("must not run config set on a missing bundle: %v", call.Args)
 		}
+	}
+}
+
+// TestApply_FailsWhenLocalCAAppendFailsOnRealKubeconfig: with an admin
+// kubeconfig on disk, a failed CA append must fail the stage — the merged
+// user context would otherwise embed a bundle that breaks after the
+// apiserver cert rollout.
+func TestApply_FailsWhenLocalCAAppendFailsOnRealKubeconfig(t *testing.T) {
+	s, sc, _, cmd := newLocalStageEnv(t)
+	inner := cmd.RunFunc
+	cmd.RunFunc = func(name string, args []string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "config set ") {
+			return nil, errors.New("oc config set exploded")
+		}
+		return inner(name, args)
+	}
+
+	err := s.Apply(context.Background(), sc)
+	if err == nil || !strings.Contains(err.Error(), "add easyshift CA to admin kubeconfig") {
+		t.Fatalf("want fatal append error, got %v", err)
 	}
 }
 

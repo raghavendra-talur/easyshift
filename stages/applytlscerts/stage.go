@@ -136,9 +136,16 @@ func (s *Stage) Apply(ctx context.Context, sc *interfaces.StageContext) error {
 	} else {
 		caPath := config.LocalCACertPath(sc.Config.ConfigDir)
 		if err := s.appendLocalCAToKubeconfig(ctx, oc, kubeconfig, sc.Cluster.Name, caPath); err != nil {
+			// The merged user context (next stage) embeds this bundle, so on a
+			// real cluster a failed append breaks `oc` once the apiserver
+			// rollout completes — fail loudly; the stage is retry-safe. With
+			// no kubeconfig on disk at all (fakes/--simulate) there is
+			// nothing to fix up, so only warn.
+			if _, statErr := os.Stat(kubeconfig); statErr == nil {
+				return fmt.Errorf("add easyshift CA to admin kubeconfig: %w", err)
+			}
 			logrus.Warnf("apply-tls-certs: could not add the easyshift CA to %s "+
-				"(oc may report certificate errors for api.%s): %v",
-				kubeconfig, sc.Cluster.FQDN(), err)
+				"(oc may report certificate errors for api.%s): %v", kubeconfig, sc.Cluster.FQDN(), err)
 		}
 	}
 	return nil

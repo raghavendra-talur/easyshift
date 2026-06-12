@@ -88,6 +88,9 @@ easyshift stop demo     # graceful shutdown of all nodes
 easyshift start demo    # boot them back up
 ```
 
+`start` blocks until the API responds, pending CSRs are approved, and the node
+is Ready (see [access.md](access.md)).
+
 ### `delete <name>`
 
 Stops the cluster if running, rolls back every applied install stage (VMs,
@@ -96,6 +99,20 @@ directory.
 
 ```sh
 easyshift delete demo
+```
+
+### `trust` — install the easyshift CA into host trust stores
+
+Installs the host-local easyshift CA certificate into your system and browser
+trust stores so that `curl`, `oc`, and your browser accept local-CA cluster
+certificates without `--insecure-skip-tls-verify`. Requires `sudo` (or your
+distro equivalent) to write to system certificate directories. Run once; all
+current and future local-CA clusters are covered immediately. See
+[access.md](access.md) for the full trust workflow.
+
+```sh
+easyshift trust              # install into system + browser trust stores (prompts for sudo)
+easyshift trust --uninstall  # remove the CA from all trust stores
 ```
 
 ### `nat-network reset` — clean up the shared NAT network
