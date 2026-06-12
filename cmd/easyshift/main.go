@@ -177,7 +177,18 @@ func newCreateCommand(mgr **app.ClusterManager, simBundle **fakes.Bundle, cfgp *
 			if err := ensurePullSecret(context.Background(), *cfgp, depsp.PullSecret, os.Stdin, os.Stdout, stdinIsTTY()); err != nil {
 				return err
 			}
-			return (*mgr).Create(context.Background(), c)
+			if err := (*mgr).Create(context.Background(), c); err != nil {
+				return err
+			}
+			// Create may have resumed an existing cluster (a different
+			// *ClusterConfig than ours) — re-find it for accurate fields.
+			for _, cl := range (*mgr).List() {
+				if cl.Name == name {
+					printCreateSummary(os.Stdout, *cfgp, cl)
+					break
+				}
+			}
+			return nil
 		},
 	}
 
