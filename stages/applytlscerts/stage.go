@@ -1,15 +1,19 @@
-// Package applytlscerts issues Let's Encrypt certs (api + *.apps) via ACME
-// DNS-01, plants them as TLS secrets, and patches APIServer +
-// IngressController to serve them. No-op when TLSEmail is unset.
+// Package applytlscerts issues the cluster's api + *.apps serving certs and
+// patches APIServer + IngressController to serve them. With TLSEmail set it
+// uses Let's Encrypt (ACME DNS-01); otherwise it signs with the host-local
+// easyshift CA so every cluster gets a cert chain the host can trust.
 package applytlscerts
 
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/sirupsen/logrus"
 
@@ -19,14 +23,20 @@ import (
 
 // Stage issues and applies the cluster's TLS certificates.
 type Stage struct {
-	newCertIssuer func(opts interfaces.CertIssuerOpts) (interfaces.CertIssuer, error)
-	cmd           interfaces.CommandRunner
+	newCertIssuer  func(opts interfaces.CertIssuerOpts) (interfaces.CertIssuer, error)
+	newLocalIssuer func(caDir string) (interfaces.CertIssuer, error)
+	cmd            interfaces.CommandRunner
 }
 
-// New returns the apply-tls-certs stage. newCertIssuer is a factory because
-// the per-cluster ACME settings (email, staging) aren't known until create.
-func New(newCertIssuer func(opts interfaces.CertIssuerOpts) (interfaces.CertIssuer, error), cmd interfaces.CommandRunner) *Stage {
-	return &Stage{newCertIssuer: newCertIssuer, cmd: cmd}
+// New returns the apply-tls-certs stage. Both issuer params are factories:
+// the ACME one because per-cluster settings (email, staging) aren't known
+// until create, the local one to mirror that shape for wiring symmetry.
+func New(
+	newCertIssuer func(opts interfaces.CertIssuerOpts) (interfaces.CertIssuer, error),
+	newLocalIssuer func(caDir string) (interfaces.CertIssuer, error),
+	cmd interfaces.CommandRunner,
+) *Stage {
+	return &Stage{newCertIssuer: newCertIssuer, newLocalIssuer: newLocalIssuer, cmd: cmd}
 }
 
 func (*Stage) Name() string { return "apply-tls-certs" }
@@ -44,22 +54,28 @@ func (*Stage) Preflight(_ context.Context, sc *interfaces.StageContext) error {
 }
 
 func (s *Stage) Apply(ctx context.Context, sc *interfaces.StageContext) error {
-	if sc.Cluster.TLSEmail == "" {
-		return nil
-	}
-	token, err := config.ReadDNSToken(sc.Config.ConfigDir, sc.Cluster.DNSProvider)
-	if err != nil {
-		return err
-	}
-	issuer, err := s.newCertIssuer(interfaces.CertIssuerOpts{
-		Email:       sc.Cluster.TLSEmail,
-		AccountDir:  config.ACMEAccountDir(sc.Config.ConfigDir, sc.Cluster.DNSProvider, sc.Cluster.TLSStaging),
-		DNSProvider: sc.Cluster.DNSProvider,
-		Token:       token,
-		Staging:     sc.Cluster.TLSStaging,
-	})
-	if err != nil {
-		return fmt.Errorf("cert issuer: %w", err)
+	var issuer interfaces.CertIssuer
+	if sc.Cluster.TLSEmail != "" {
+		token, err := config.ReadDNSToken(sc.Config.ConfigDir, sc.Cluster.DNSProvider)
+		if err != nil {
+			return err
+		}
+		issuer, err = s.newCertIssuer(interfaces.CertIssuerOpts{
+			Email:       sc.Cluster.TLSEmail,
+			AccountDir:  config.ACMEAccountDir(sc.Config.ConfigDir, sc.Cluster.DNSProvider, sc.Cluster.TLSStaging),
+			DNSProvider: sc.Cluster.DNSProvider,
+			Token:       token,
+			Staging:     sc.Cluster.TLSStaging,
+		})
+		if err != nil {
+			return fmt.Errorf("cert issuer: %w", err)
+		}
+	} else {
+		var err error
+		issuer, err = s.newLocalIssuer(config.LocalCADir(sc.Config.ConfigDir))
+		if err != nil {
+			return fmt.Errorf("local cert issuer: %w", err)
+		}
 	}
 
 	tlsDir := filepath.Join(sc.ClusterDir(), "tls")
@@ -106,13 +122,24 @@ func (s *Stage) Apply(ctx context.Context, sc *interfaces.StageContext) error {
 		return fmt.Errorf("patch ingresscontroller/default: %w", err)
 	}
 
-	// Now that api.<fqdn> serves a publicly-trusted Let's Encrypt cert, make the
-	// admin kubeconfig validate it out of the box. Best-effort: the cluster is
-	// already up, so a hiccup here shouldn't fail the install — just warn.
-	if err := s.makeKubeconfigPublic(ctx, oc, kubeconfig, sc.Cluster.Name); err != nil {
-		logrus.Warnf("apply-tls-certs: could not make %s trust the public cert automatically "+
-			"(use --insecure-skip-tls-verify, or `oc config unset clusters.%s.certificate-authority-data`): %v",
-			kubeconfig, sc.Cluster.Name, err)
+	// The admin kubeconfig's embedded internal CA no longer validates
+	// api.<fqdn> once the named certificate is served. LE path: drop the CA
+	// so the system trust store takes over. Local path: append our CA to the
+	// bundle (keeping the internal CA valid during the apiserver rollout).
+	// Both are best-effort: the cluster is up, so only warn on failure.
+	if sc.Cluster.TLSEmail != "" {
+		if err := s.makeKubeconfigPublic(ctx, oc, kubeconfig, sc.Cluster.Name); err != nil {
+			logrus.Warnf("apply-tls-certs: could not make %s trust the public cert automatically "+
+				"(use --insecure-skip-tls-verify, or `oc config unset clusters.%s.certificate-authority-data`): %v",
+				kubeconfig, sc.Cluster.Name, err)
+		}
+	} else {
+		caPath := config.LocalCACertPath(sc.Config.ConfigDir)
+		if err := s.appendLocalCAToKubeconfig(ctx, oc, kubeconfig, sc.Cluster.Name, caPath); err != nil {
+			logrus.Warnf("apply-tls-certs: could not add the easyshift CA to %s "+
+				"(oc may report certificate errors; the original is at %s.internal-ca): %v",
+				kubeconfig, kubeconfig, err)
+		}
 	}
 	return nil
 }
@@ -143,6 +170,62 @@ func (s *Stage) makeKubeconfigPublic(ctx context.Context, oc, kubeconfig, cluste
 	}
 	logrus.Infof("rewrote %s to validate the Let's Encrypt cert via system trust "+
 		"(internal-CA copy saved at %s)", kubeconfig, backup)
+	return nil
+}
+
+// appendLocalCAToKubeconfig appends the easyshift local CA to the admin
+// kubeconfig's certificate-authority-data so `oc` validates the local-CA
+// serving cert on api.<fqdn>. The internal CA is kept in the bundle (the
+// apiserver serves the old cert until its rollout completes). Idempotent:
+// once our CA is in the bundle, resumes change nothing.
+func (s *Stage) appendLocalCAToKubeconfig(ctx context.Context, oc, kubeconfig, clusterEntry, caCertPath string) error {
+	caPEM, err := os.ReadFile(caCertPath)
+	if err != nil {
+		return fmt.Errorf("read local CA cert: %w", err)
+	}
+	caBlock, _ := pem.Decode(caPEM)
+	if caBlock == nil {
+		return fmt.Errorf("no PEM block in %s", caCertPath)
+	}
+
+	out, err := s.cmd.Run(ctx, oc, "--kubeconfig", kubeconfig, "config", "view", "--raw",
+		"-o", `jsonpath={.clusters[?(@.name=="`+clusterEntry+`")].cluster.certificate-authority-data}`)
+	if err != nil {
+		return fmt.Errorf("read kubeconfig CA bundle: %w", err)
+	}
+	bundle, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(out)))
+	if err != nil {
+		return fmt.Errorf("decode kubeconfig CA bundle: %w", err)
+	}
+	for rest := bundle; ; {
+		block, r := pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		if bytes.Equal(block.Bytes, caBlock.Bytes) {
+			return nil // already trusted
+		}
+		rest = r
+	}
+
+	orig, err := os.ReadFile(kubeconfig)
+	if err != nil {
+		return fmt.Errorf("read kubeconfig: %w", err)
+	}
+	backup := kubeconfig + ".internal-ca"
+	if _, err := os.Stat(backup); errors.Is(err, os.ErrNotExist) {
+		if err := os.WriteFile(backup, orig, 0o600); err != nil {
+			return fmt.Errorf("back up kubeconfig: %w", err)
+		}
+	}
+
+	newBundle := append(append([]byte{}, bundle...), caPEM...)
+	if _, err := s.cmd.Run(ctx, oc, "--kubeconfig", kubeconfig, "config", "set",
+		"clusters."+clusterEntry+".certificate-authority-data",
+		base64.StdEncoding.EncodeToString(newBundle)); err != nil {
+		return fmt.Errorf("append CA to kubeconfig: %w", err)
+	}
+	logrus.Infof("added the easyshift local CA to %s (original saved at %s)", kubeconfig, backup)
 	return nil
 }
 

@@ -74,7 +74,7 @@ func (cm *ClusterManager) buildStages() []interfaces.Stage {
 		createmastervms.New(d.VM, d.Host),
 		verifymasterip.New(d.Host),
 		waitforinstall.New(d.Installer, d.CSR, d.Hostname, d.VM),
-		applytlscerts.New(d.NewCertIssuer, d.Cmd),
+		applytlscerts.New(d.NewCertIssuer, d.NewLocalCertIssuer, d.Cmd),
 		finalize.New(),
 	}
 }
