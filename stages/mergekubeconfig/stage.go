@@ -60,6 +60,9 @@ func (s *Stage) Apply(ctx context.Context, sc *interfaces.StageContext) error {
 		return fmt.Errorf("create kubeconfig dir: %w", err)
 	}
 	sc.Cluster.KubeconfigTarget = target
+	if err := sc.Config.Save(); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
 
 	oc := sc.OCBinaryPath()
 	admin := sc.KubeconfigPath()
@@ -157,6 +160,10 @@ func (s *Stage) Rollback(ctx context.Context, sc *interfaces.StageContext) error
 		if _, err := s.cmd.Run(ctx, oc, args...); err != nil {
 			logrus.Warnf("merge-kubeconfig rollback: oc %v: %v", args, err)
 		}
+	}
+	sc.Cluster.KubeconfigTarget = ""
+	if err := sc.Config.Save(); err != nil {
+		logrus.Warnf("merge-kubeconfig rollback: save config: %v", err)
 	}
 	return nil
 }

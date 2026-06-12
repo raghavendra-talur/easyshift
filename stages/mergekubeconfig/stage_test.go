@@ -21,6 +21,7 @@ func newEnv(t *testing.T) (*Stage, *interfaces.StageContext, *fakes.CommandRunne
 
 	cfg := config.NewDefaultConfig(tmp)
 	c := &config.ClusterConfig{Name: "dr1", Domain: "example.test", OCPVersion: "4.99.0", MasterCount: 1}
+	cfg.Clusters = []*config.ClusterConfig{c}
 	sc := &interfaces.StageContext{Cluster: c, Config: cfg}
 	if err := os.MkdirAll(filepath.Join(sc.ClusterDir(), "auth"), 0o700); err != nil {
 		t.Fatal(err)
@@ -169,6 +170,24 @@ func TestRollback_UsesRecordedTarget(t *testing.T) {
 	}
 	if !found {
 		t.Error("rollback never touched the recorded target")
+	}
+}
+
+func TestApply_PersistsKubeconfigTarget(t *testing.T) {
+	s, sc, _, target := newEnv(t)
+
+	if err := s.Apply(context.Background(), sc); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	// A fresh load from disk (what a later `delete` process does) must see
+	// the recorded target.
+	reloaded, err := config.LoadConfig(sc.Config.ConfigDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reloaded.Clusters) != 1 || reloaded.Clusters[0].KubeconfigTarget != target {
+		t.Errorf("KubeconfigTarget not persisted; reloaded = %+v", reloaded.Clusters)
 	}
 }
 
