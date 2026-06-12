@@ -40,7 +40,7 @@ lint.go.light: lint.go.vet lint.go.fmt
 
 .PHONY: test
 test:  lint.go.light ## run unit tests
-	@go test ./...
+	@go test -count=1 ./...
 
 .PHONY: lint.go.golangci
 lint.go.golangci: ## lint with golangci-lint
