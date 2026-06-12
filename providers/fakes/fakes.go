@@ -695,6 +695,28 @@ func (p *PullSecretFetcher) WaitAndFetch(_ context.Context) ([]byte, error) {
 	return p.Secret, nil
 }
 
+// TrustStore is a fake interfaces.TrustStoreInstaller recording calls.
+type TrustStore struct {
+	mu          sync.Mutex
+	Installed   []string // caCertPath per Install call
+	Uninstalled []string // caCertPath per Uninstall call
+	Err         error
+}
+
+func (t *TrustStore) Install(_ context.Context, caCertPath string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.Installed = append(t.Installed, caCertPath)
+	return t.Err
+}
+
+func (t *TrustStore) Uninstall(_ context.Context, caCertPath string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.Uninstalled = append(t.Uninstalled, caCertPath)
+	return t.Err
+}
+
 // All returns a Deps wired with one fresh fake per interface, ready for tests
 // that want a vanilla happy-path environment.
 func All() (interfaces.Deps, *Bundle) {
@@ -713,6 +735,7 @@ func All() (interfaces.Deps, *Bundle) {
 		CertIssuer:      &CertIssuer{},
 		LocalCertIssuer: &CertIssuer{},
 		PullSecret:      &PullSecretFetcher{},
+		TrustStore:      &TrustStore{},
 	}
 	return interfaces.Deps{
 		Cmd:        b.Cmd,
@@ -727,6 +750,7 @@ func All() (interfaces.Deps, *Bundle) {
 		DNS:        b.DNS,
 		DNSManager: b.DNSManager,
 		PullSecret: b.PullSecret,
+		TrustStore: b.TrustStore,
 		NewCertIssuer: func(opts interfaces.CertIssuerOpts) (interfaces.CertIssuer, error) {
 			b.CertIssuer.recordOpts(opts)
 			return b.CertIssuer, nil
@@ -842,6 +866,11 @@ func (b *Bundle) WriteTrace(w io.Writer) {
 		fmt.Fprintf(w, "\nHostname injector: launched (target=%s)\n", b.Hostname.LastHostname)
 	}
 
+	if len(b.TrustStore.Installed)+len(b.TrustStore.Uninstalled) > 0 {
+		fmt.Fprintf(w, "\nTrust store: installs=%v uninstalls=%v\n",
+			b.TrustStore.Installed, b.TrustStore.Uninstalled)
+	}
+
 	if len(b.Cmd.Calls) > 0 {
 		fmt.Fprintf(w, "\nShell commands run (%d):\n", len(b.Cmd.Calls))
 		for _, c := range b.Cmd.Calls {
@@ -872,4 +901,5 @@ type Bundle struct {
 	CertIssuer      *CertIssuer
 	LocalCertIssuer *CertIssuer
 	PullSecret      *PullSecretFetcher
+	TrustStore      *TrustStore
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/TheEasyShift/easyshift/providers/openshift"
 	"github.com/TheEasyShift/easyshift/providers/redhat"
 	"github.com/TheEasyShift/easyshift/providers/tls"
+	"github.com/TheEasyShift/easyshift/providers/truststore"
 )
 
 // NewProductionDeps wires real implementations of every dependency, rooted
@@ -46,6 +47,7 @@ func NewProductionDeps(cfg *config.Config, hostIP string) (interfaces.Deps, erro
 		DNS:        dns.NewDigDNSResolver(cmd),
 		DNSManager: newProductionDNSManager(cfg),
 		PullSecret: redhat.NewFetcher(redhat.DefaultSSORealmURL, redhat.DefaultAPIURL),
+		TrustStore: truststore.New(cmd),
 		NewCertIssuer: func(opts interfaces.CertIssuerOpts) (interfaces.CertIssuer, error) {
 			return tls.NewIssuer(opts)
 		},

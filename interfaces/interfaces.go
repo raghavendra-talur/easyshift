@@ -192,6 +192,14 @@ type CertIssuerOpts struct {
 	Staging     bool
 }
 
+// TrustStoreInstaller installs/removes the easyshift local CA in the host's
+// trust stores (system store via sudo, NSS databases via certutil when
+// present). Consumed only by cmd (the `trust` command) — never by stages.
+type TrustStoreInstaller interface {
+	Install(ctx context.Context, caCertPath string) error
+	Uninstall(ctx context.Context, caCertPath string) error
+}
+
 // DNSManager mutates a cluster's A records (api, api-int, *.apps) on a public
 // DNS provider. zone is the parent zone; fqdn is <name>.<base-domain>.
 type DNSManager interface {

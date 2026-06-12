@@ -20,6 +20,9 @@ type Deps struct {
 	// PullSecret fetches the pull secret from the user's Red Hat account
 	// (device-code login). Consumed only by cmd — never by stages.
 	PullSecret PullSecretFetcher
+	// TrustStore installs the local CA into host trust stores. Consumed only
+	// by cmd (`easyshift trust`) — never by stages.
+	TrustStore TrustStoreInstaller
 	// NewCertIssuer constructs a CertIssuer for per-cluster ACME settings
 	// (email + staging). Function-shaped because that state isn't known until
 	// a specific cluster is being created.
