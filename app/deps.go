@@ -14,6 +14,7 @@ import (
 	"github.com/TheEasyShift/easyshift/providers/fileserver"
 	"github.com/TheEasyShift/easyshift/providers/host"
 	"github.com/TheEasyShift/easyshift/providers/libvirt"
+	"github.com/TheEasyShift/easyshift/providers/localca"
 	"github.com/TheEasyShift/easyshift/providers/openshift"
 	"github.com/TheEasyShift/easyshift/providers/redhat"
 	"github.com/TheEasyShift/easyshift/providers/tls"
@@ -47,6 +48,9 @@ func NewProductionDeps(cfg *config.Config, hostIP string) (interfaces.Deps, erro
 		PullSecret: redhat.NewFetcher(redhat.DefaultSSORealmURL, redhat.DefaultAPIURL),
 		NewCertIssuer: func(opts interfaces.CertIssuerOpts) (interfaces.CertIssuer, error) {
 			return tls.NewIssuer(opts)
+		},
+		NewLocalCertIssuer: func(caDir string) (interfaces.CertIssuer, error) {
+			return localca.New(caDir), nil
 		},
 	}, nil
 }

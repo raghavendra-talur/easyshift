@@ -699,19 +699,20 @@ func (p *PullSecretFetcher) WaitAndFetch(_ context.Context) ([]byte, error) {
 // that want a vanilla happy-path environment.
 func All() (interfaces.Deps, *Bundle) {
 	b := &Bundle{
-		Cmd:        &CommandRunner{},
-		Download:   &Downloader{},
-		VM:         &VMManager{},
-		Net:        &NetworkProvisioner{},
-		Installer:  &Installer{},
-		Files:      &FileServer{Root: "/fake-http-root", URL: "http://fake:9393"},
-		CSR:        &CSRApprover{},
-		Hostname:   &HostnameInjector{},
-		Host:       &HostInspector{},
-		DNS:        &DNSResolver{},
-		DNSManager: &DNSManager{},
-		CertIssuer: &CertIssuer{},
-		PullSecret: &PullSecretFetcher{},
+		Cmd:             &CommandRunner{},
+		Download:        &Downloader{},
+		VM:              &VMManager{},
+		Net:             &NetworkProvisioner{},
+		Installer:       &Installer{},
+		Files:           &FileServer{Root: "/fake-http-root", URL: "http://fake:9393"},
+		CSR:             &CSRApprover{},
+		Hostname:        &HostnameInjector{},
+		Host:            &HostInspector{},
+		DNS:             &DNSResolver{},
+		DNSManager:      &DNSManager{},
+		CertIssuer:      &CertIssuer{},
+		LocalCertIssuer: &CertIssuer{},
+		PullSecret:      &PullSecretFetcher{},
 	}
 	return interfaces.Deps{
 		Cmd:        b.Cmd,
@@ -729,6 +730,9 @@ func All() (interfaces.Deps, *Bundle) {
 		NewCertIssuer: func(opts interfaces.CertIssuerOpts) (interfaces.CertIssuer, error) {
 			b.CertIssuer.recordOpts(opts)
 			return b.CertIssuer, nil
+		},
+		NewLocalCertIssuer: func(_ string) (interfaces.CertIssuer, error) {
+			return b.LocalCertIssuer, nil
 		},
 	}, b
 }
@@ -804,6 +808,12 @@ func (b *Bundle) WriteTrace(w io.Writer) {
 				b.CertIssuer.LastOpts.Email, b.CertIssuer.LastOpts.Staging, b.CertIssuer.LastOpts.DNSProvider)
 		}
 	}
+	if len(b.LocalCertIssuer.Issued) > 0 {
+		fmt.Fprintf(w, "\nLocal-CA TLS certs issued (%d):\n", len(b.LocalCertIssuer.Issued))
+		for _, d := range b.LocalCertIssuer.Issued {
+			fmt.Fprintf(w, "  %v\n", d)
+		}
+	}
 
 	if b.Installer.WroteInstallConfig || b.Installer.CreatedSingleNodeIgn ||
 		b.Installer.EmbeddedISO || b.Installer.WaitedForInstall {
@@ -848,17 +858,18 @@ func (b *Bundle) WriteTrace(w io.Writer) {
 // Bundle groups the concrete fakes returned by All so tests can read recorded
 // calls without re-asserting interface types.
 type Bundle struct {
-	Cmd        *CommandRunner
-	Download   *Downloader
-	VM         *VMManager
-	Net        *NetworkProvisioner
-	Installer  *Installer
-	Files      *FileServer
-	CSR        *CSRApprover
-	Hostname   *HostnameInjector
-	Host       *HostInspector
-	DNS        *DNSResolver
-	DNSManager *DNSManager
-	CertIssuer *CertIssuer
-	PullSecret *PullSecretFetcher
+	Cmd             *CommandRunner
+	Download        *Downloader
+	VM              *VMManager
+	Net             *NetworkProvisioner
+	Installer       *Installer
+	Files           *FileServer
+	CSR             *CSRApprover
+	Hostname        *HostnameInjector
+	Host            *HostInspector
+	DNS             *DNSResolver
+	DNSManager      *DNSManager
+	CertIssuer      *CertIssuer
+	LocalCertIssuer *CertIssuer
+	PullSecret      *PullSecretFetcher
 }

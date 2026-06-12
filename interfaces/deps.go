@@ -24,4 +24,8 @@ type Deps struct {
 	// (email + staging). Function-shaped because that state isn't known until
 	// a specific cluster is being created.
 	NewCertIssuer func(opts CertIssuerOpts) (CertIssuer, error)
+	// NewLocalCertIssuer constructs a CertIssuer backed by the host-local
+	// easyshift CA rooted at caDir (config.LocalCADir). Used for every
+	// cluster without TLSEmail. Function-shaped to mirror NewCertIssuer.
+	NewLocalCertIssuer func(caDir string) (CertIssuer, error)
 }
