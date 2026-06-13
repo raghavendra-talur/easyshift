@@ -33,8 +33,15 @@ func (cm *ClusterManager) convergeAfterStart(ctx context.Context, c *config.Clus
 	}
 
 	csrCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	go func() { _ = cm.deps.CSR.Run(csrCtx, oc, kubeconfig) }()
+	csrDone := make(chan struct{})
+	go func() {
+		defer close(csrDone)
+		_ = cm.deps.CSR.Run(csrCtx, oc, kubeconfig)
+	}()
+	defer func() {
+		cancel()
+		<-csrDone
+	}()
 
 	deadline := time.Now().Add(convergeTimeout)
 	for {
